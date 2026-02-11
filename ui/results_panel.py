@@ -7,16 +7,18 @@ Modernized UI with Split Pane, Preview, and Source Viewer.
 from javax.swing import (
     JPanel, JScrollPane, JTabbedPane, JButton, JLabel,
     JTable, JComboBox, JTextField, BorderFactory, JSplitPane,
-    JTextArea, Box, JDialog, JFrame, SwingUtilities
+    JTextArea, Box, JDialog, JFrame, SwingUtilities, AbstractAction
 )
 from javax.swing.event import ListSelectionListener
-from javax.swing.table import DefaultTableModel
+from javax.swing.table import DefaultTableModel, DefaultTableCellRenderer
 from java.awt import (
     BorderLayout, FlowLayout, Font, Dimension, Toolkit, 
     Color, GridBagLayout, GridBagConstraints, Insets
 )
 from java.awt.datatransfer import StringSelection
 from java.awt.event import ActionListener, KeyListener, KeyEvent, MouseAdapter
+from javax.swing import KeyStroke # Added for KeyStroke
+from threading import Thread
 import json
 
 
@@ -41,6 +43,12 @@ class ResultsPanel(JPanel):
         self.LABEL_FONT = Font("SansSerif", Font.PLAIN, 12)
         self.MONO_FONT = Font("Monospaced", Font.PLAIN, 12)
         
+        self.MONO_FONT = Font("Monospaced", Font.PLAIN, 12)
+        
+        # Store tables for access
+        self.tables = {}
+        self.models = {}
+
         # Findings by category
         self.findings = {
             "endpoints": [],
@@ -48,6 +56,9 @@ class ResultsPanel(JPanel):
             "secrets": [],
             "emails": [],
             "files": [],
+            "cloud": [],
+            "subdomains": [],
+            "keywords": [],
         }
         
         self.sources = set()
@@ -119,25 +130,41 @@ class ResultsPanel(JPanel):
             ("Secrets", "secrets"),
             ("Emails", "emails"),
             ("Files", "files"),
+            ("Cloud", "cloud"),
+            ("Subdomains", "subdomains"),
+            ("Keywords", "keywords"),
         ]
         
         for title, key in categories:
             panel = JPanel(BorderLayout())
             panel.setBackground(self.BACKGROUND_DARK)
-            columns = ["Value", "Source"]
+            columns = ["Value", "Source", "Detail", "Metadata"]
             model = NonEditableTableModel(columns, 0)
             self.models[key] = model
             
             table = JTable(model)
+            self.tables[key] = table
+            # Hide Metadata column
+            table.getColumnModel().removeColumn(table.getColumnModel().getColumn(3))
+            
             table.setAutoCreateRowSorter(True)
             table.setFont(self.MONO_FONT)
             table.setRowHeight(25)
             table.setBackground(self.BACKGROUND_DARK)
             table.setForeground(self.TEXT_PRIMARY)
             table.setGridColor(self.BORDER_COLOR)
+            
+            # Setup "Value Only" Selection Logic & Visuals
             table.setSelectionBackground(self.SELECTION_COLOR)
             table.setSelectionForeground(Color.WHITE)
-            table.setIntercellSpacing(Dimension(10, 5))
+            table.setCellSelectionEnabled(True)
+            table.setColumnSelectionAllowed(True)
+            table.setRowSelectionAllowed(True) # Required for getSelectedRow/Rows logic
+            
+            # Apply renderer to all columns to hide selection on non-value columns
+            renderer = ValueSelectionRenderer(self.SELECTION_COLOR, self.BACKGROUND_DARK, self.TEXT_PRIMARY)
+            for i in range(3): # Value, Source, Detail
+                table.getColumnModel().getColumn(i).setCellRenderer(renderer)
             
             # Header styling
             header = table.getTableHeader()
@@ -145,17 +172,25 @@ class ResultsPanel(JPanel):
             header.setForeground(self.TEXT_PRIMARY)
             header.setFont(self.LABEL_FONT)
             
-            # Selection event for preview
-            table.getSelectionModel().addListSelectionListener(TableSelectionListener(self, table))
+            # Disable default JTable copy behavior to enforce our clean value-only copy
+            table.setTransferHandler(None)
             
-            # Double-click listener for source viewer
+            # Use ActionMap for Ctrl+C instead of KeyListener for reliability
+            input_map = table.getInputMap(JTable.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+            action_map = table.getActionMap()
+            
+            # Override "copy" action
+            input_map.put(KeyStroke.getKeyStroke(KeyEvent.VK_C, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask()), "copy")
+            action_map.put("copy", CopyAction(self))
+            
+            # Override "select all" action (Ctrl+A)
+            input_map.put(KeyStroke.getKeyStroke(KeyEvent.VK_A, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask()), "selectAll")
+            action_map.put("selectAll", SelectAllAction(self))
+            
+            # Listeners & Actions
+            table.getSelectionModel().addListSelectionListener(TableSelectionListener(self, table))
             table.addMouseListener(TableMouseListener(self, table))
             
-            # Column widths
-            table.getColumnModel().getColumn(0).setPreferredWidth(600)
-            table.getColumnModel().getColumn(1).setPreferredWidth(200)
-            
-            self.tables[key] = table
             scroll = JScrollPane(table)
             scroll.setBackground(self.BACKGROUND_DARK)
             scroll.getViewport().setBackground(self.BACKGROUND_DARK)
@@ -237,28 +272,39 @@ class ResultsPanel(JPanel):
     
     def add_findings(self, new_findings, source_name):
         """Add new findings and update UI."""
-        if source_name and source_name not in self.sources:
-            self.sources.add(source_name)
-            self.source_filter.addItem(source_name)
+        def update():
+            if source_name and source_name not in self.sources:
+                self.sources.add(source_name)
+                self.source_filter.addItem(source_name)
+            
+            for finding in new_findings:
+                category = finding.get("category", "")
+                if category in self.findings:
+                    self.findings[category].append({
+                        "value": finding.get("value", ""),
+                        "source": finding.get("source", source_name), # Filename for UI
+                        "url": finding.get("url", ""),              # mapping key
+                        "offset": finding.get("offset", 0),
+                        "detail": finding.get("detail", ""),
+                    })
+            
+            self._refresh_tables()
         
-        for finding in new_findings:
-            category = finding.get("category", "")
-            if category in self.findings:
-                self.findings[category].append({
-                    "value": finding.get("value", ""),
-                    "source": finding.get("source", source_name),
-                    "offset": finding.get("offset", 0),
-                })
-        
-        self._refresh_tables()
+        SwingUtilities.invokeLater(update)
     
     def _refresh_tables(self):
         """Refresh tables with current filters."""
+        # This is typically called from within invokeLater via add_findings or clear_all
+        # but safe to wrap again or ensure it's on EDT if called directly
+        if not SwingUtilities.isEventDispatchThread():
+            SwingUtilities.invokeLater(self._refresh_tables)
+            return
+
         selected_source = str(self.source_filter.getSelectedItem())
         search_text = self.search_field.getText().lower().strip()
         
-        titles = ["Endpoints", "URLs", "Secrets", "Emails", "Files"]
-        keys = ["endpoints", "urls", "secrets", "emails", "files"]
+        titles = ["Endpoints", "URLs", "Secrets", "Emails", "Files", "Cloud", "Subdomains", "Keywords"]
+        keys = ["endpoints", "urls", "secrets", "emails", "files", "cloud", "subdomains", "keywords"]
         
         for i, (title, key) in enumerate(zip(titles, keys)):
             model = self.models[key]
@@ -274,10 +320,16 @@ class ResultsPanel(JPanel):
                 
                 # Search filter
                 if search_text:
-                    if search_text not in item.get("value", "").lower():
+                    if search_text not in item.get("value", "").lower() and \
+                       search_text not in item.get("detail", "").lower():
                         continue
                 
-                model.addRow([item.get("value", ""), item.get("source", "")])
+                model.addRow([
+                    item.get("value", ""), 
+                    item.get("source", ""), 
+                    item.get("detail", ""),
+                    item # Store the full finding object as metadata
+                ])
                 count += 1
             
             self.tabs.setTitleAt(i, "%s (%d)" % (title, count))
@@ -291,89 +343,174 @@ class ResultsPanel(JPanel):
         s = len(self.findings.get("secrets", []))
         m = len(self.findings.get("emails", []))
         f = len(self.findings.get("files", []))
-        self.stats_label.setText("E:%d | U:%d | S:%d | M:%d | F:%d" % (e, u, s, m, f))
+        c = len(self.findings.get("cloud", []))
+        d = len(self.findings.get("subdomains", []))
+        k = len(self.findings.get("keywords", []))
+        self.stats_label.setText("E:%d | U:%d | S:%d | M:%d | F:%d | C:%d | D:%d | K:%d" % (e, u, s, m, f, c, d, k))
     
     def update_preview(self, text):
         """Update the preview text area."""
-        self.preview_area.setText(text)
-        self.preview_area.setCaretPosition(0)
+        def update():
+            self.preview_area.setText(text)
+            self.preview_area.setCaretPosition(0)
+        SwingUtilities.invokeLater(update)
 
     def view_source_for_selected(self):
-        """Open source viewer for selected finding."""
+        """Open source viewer for selected finding using hidden metadata."""
         table = self._get_current_table()
         if not table or table.getSelectedRow() < 0:
             return
             
-        row = table.convertRowIndexToModel(table.getSelectedRow())
-        key = self._get_current_key()
+        model_row = table.convertRowIndexToModel(table.getSelectedRow())
+        # Column 3 is the hidden Metadata column
+        item = table.getModel().getValueAt(model_row, 3)
         
-        # Re-apply filters to find the correct item in self.findings
-        selected_source = str(self.source_filter.getSelectedItem())
-        search_text = self.search_field.getText().lower().strip()
-        
-        filtered_results = []
-        for item in self.findings.get(key, []):
-            if selected_source != "All Sources" and item.get("source") != selected_source:
-                continue
-            if search_text and search_text not in item.get("value", "").lower():
-                continue
-            filtered_results.append(item)
-            
-        if row < len(filtered_results):
-            item = filtered_results[row]
-            source_content = self.extender.get_source_code(item["source"])
+        if item:
+            # item["url"] is the full URL for mapping
+            source_content = self.extender.get_source_code(item.get("url", ""))
             if source_content:
-                # Use None for parent if getExtenderWindowFrame is missing
                 SourceViewerDialog(None, 
-                                 item["source"], source_content, 
-                                 item["offset"], len(item["value"])).setVisible(True)
+                                 item.get("source", "Unknown"), source_content, 
+                                 item.get("offset", 0), len(str(item.get("value", "")))).setVisible(True)
 
     def _get_current_table(self):
         idx = self.tabs.getSelectedIndex()
-        keys = ["endpoints", "urls", "secrets", "emails", "files"]
+        keys = ["endpoints", "urls", "secrets", "emails", "files", "cloud", "subdomains", "keywords"]
         if 0 <= idx < len(keys):
+            # Ensure self.tables is initialized before access
+            if not hasattr(self, 'tables'):
+                self.tables = {} # Initialize if not already
             return self.tables.get(keys[idx])
         return None
 
     def _get_current_key(self):
         idx = self.tabs.getSelectedIndex()
-        keys = ["endpoints", "urls", "secrets", "emails", "files"]
+        keys = ["endpoints", "urls", "secrets", "emails", "files", "cloud", "subdomains", "keywords"]
         if 0 <= idx < len(keys):
             return keys[idx]
         return None
 
     def _copy_to_clipboard(self, text):
-        try:
-            clipboard = Toolkit.getDefaultToolkit().getSystemClipboard()
-            clipboard.setContents(StringSelection(text), None)
-        except:
-            pass
+        """Robust clipboard copy for Burp/AWT environments."""
+        if not text: return
+    def _copy_to_clipboard(self, text):
+        """
+        Robust clipboard copy using SwingUtilities.invokeLater.
+        Fallback to stdout if clipboard fails.
+        """
+        if not text: return
+        
+        # 1. Print to console as backup (so user can always get the data)
+        print("[INFO] Copy command received (%d chars)." % len(text))
+        
+        def do_copy():
+            try:
+                from java.awt import Toolkit
+                from java.awt.datatransfer import StringSelection
+                from java.lang import Throwable
+                
+                # Unicode safety
+                val = text if isinstance(text, unicode) else str(text).decode('utf-8', 'ignore')
+                selection = StringSelection(val)
+                
+                clipboard = Toolkit.getDefaultToolkit().getSystemClipboard()
+                clipboard.setContents(selection, selection)
+                print("[SUCCESS] Copied to system clipboard.")
+            except (Exception, Throwable) as e:
+                print("[ERROR] Clipboard access failed: " + str(e))
+                # Fallback to UI Dialog
+                self._show_copy_dialog(text)
+                
+        # Run on EDT to ensure AWT/Swing compatibility
+        SwingUtilities.invokeLater(do_copy)
 
-    def copy_selected(self):
-        table = self._get_current_table()
-        if table and table.getSelectedRow() >= 0:
-            row = table.convertRowIndexToModel(table.getSelectedRow())
-            value = table.getModel().getValueAt(row, 0)
-            self._copy_to_clipboard(str(value))
+    def _show_copy_dialog(self, text):
+        """Show a dialog with text selected for manual copying."""
+        dialog = JDialog(SwingUtilities.getWindowAncestor(self), "Copy to Clipboard", True)
+        dialog.setSize(500, 400)
+        dialog.setLocationRelativeTo(self)
+        dialog.setLayout(BorderLayout())
+        
+        area = JTextArea(text)
+        area.setFont(self.MONO_FONT)
+        area.setEditable(False)
+        area.setLineWrap(True)
+        area.setWrapStyleWord(True)
+        
+        # Select all text for easy copying
+        area.selectAll()
+        area.requestFocusInWindow()
+        
+        scroll = JScrollPane(area)
+        dialog.add(scroll, BorderLayout.CENTER)
+        
+        lbl = JLabel("  System clipboard halted. Press Ctrl+C to copy manually.")
+        lbl.setForeground(self.ACCENT_COLOR) # Re-use styling
+        dialog.add(lbl, BorderLayout.NORTH)
+        
+        btn = JButton("Close")
+        btn.addActionListener(lambda e: dialog.dispose())
+        dialog.add(btn, BorderLayout.SOUTH)
+        
+        dialog.setVisible(True)
+
+    def copy_selected(self, table=None):
+        """Copy ONLY the Value column for all selected rows."""
+        print("[DEBUG] copy_selected triggered")
+        if not table:
+            table = self._get_current_table()
+        if not table:
+            print("[DEBUG] No table found")
+            return
+            
+        selected_rows = table.getSelectedRows()
+        print("[DEBUG] Selected rows count: %d" % len(selected_rows))
+        if not selected_rows:
+            return
+            
+        values = []
+        for view_row in selected_rows:
+            model_row = table.convertRowIndexToModel(view_row)
+            value = table.getModel().getValueAt(model_row, 0)
+            if value:
+                # Handle potential unicode/bytes mix
+                v = value
+                if not isinstance(v, unicode):
+                    v = str(v).decode('utf-8', 'ignore')
+                values.append(v.strip())
+        
+        print("[DEBUG] Extracted values count: %d" % len(values))
+        if values:
+            final_text = "\n".join(values)
+            print("[DEBUG] Sending %d chars to clipboard" % len(final_text))
+            self._copy_to_clipboard(final_text)
 
     def copy_all_visible(self):
         table = self._get_current_table()
         if table:
             model = table.getModel()
-            values = [str(model.getValueAt(i, 0)) for i in range(model.getRowCount())]
+            values = []
+            for i in range(model.getRowCount()):
+                val = model.getValueAt(i, 0)
+                if val:
+                    if not isinstance(val, unicode):
+                        val = str(val).decode('utf-8', 'ignore')
+                    values.append(val.strip())
             if values:
                 self._copy_to_clipboard("\n".join(values))
 
     def clear_all(self):
-        for key in self.findings:
-            self.findings[key] = []
-        self.sources = set()
-        self.source_filter.removeAllItems()
-        self.source_filter.addItem("All Sources")
-        self.search_field.setText("")
-        self.preview_area.setText("")
-        self.extender.clear_results()
-        self._refresh_tables()
+        def update():
+            for key in self.findings:
+                self.findings[key] = []
+            self.sources = set()
+            self.source_filter.removeAllItems()
+            self.source_filter.addItem("All Sources")
+            self.search_field.setText("")
+            self.preview_area.setText("")
+            self.extender.clear_results()
+            self._refresh_tables()
+        SwingUtilities.invokeLater(update)
 
     def export_all(self):
         from javax.swing import JFileChooser
@@ -385,6 +522,30 @@ class ResultsPanel(JPanel):
             export = {k: [f["value"] for f in v] for k, v in self.findings.items()}
             with open(path, 'w') as f:
                 json.dump(export, f, indent=2)
+
+
+class ValueSelectionRenderer(DefaultTableCellRenderer):
+    """Renderer that only highlights selection on the first column for Value-Only feel."""
+    def __init__(self, selection_bg, normal_bg, normal_fg):
+        DefaultTableCellRenderer.__init__(self)
+        self.selection_bg = selection_bg
+        self.normal_bg = normal_bg
+        self.normal_fg = normal_fg
+
+    def getTableCellRendererComponent(self, table, value, isSelected, hasFocus, row, column):
+        c = DefaultTableCellRenderer.getTableCellRendererComponent(self, table, value, isSelected, hasFocus, row, column)
+        
+        # Visually only "Value" (column 0) should show selection
+        if isSelected and column == 0:
+            c.setBackground(self.selection_bg)
+            c.setForeground(Color.WHITE)
+        else:
+            c.setBackground(self.normal_bg)
+            c.setForeground(self.normal_fg)
+            
+        # Standard padding
+        c.setBorder(BorderFactory.createEmptyBorder(0, 10, 0, 10))
+        return c
 
 
 class NonEditableTableModel(DefaultTableModel):
@@ -416,22 +577,25 @@ class SourceViewerDialog(JDialog):
         # Highlight and Scroll
         try:
             if offset >= 0:
-                # Custom painter for more visible highlight
                 from javax.swing.text import DefaultHighlighter
-                painter = DefaultHighlighter.DefaultHighlightPainter(Color(255, 255, 0, 80)) # Translucent yellow
+                # More prominent highlight: semi-transparent yellow
+                painter = DefaultHighlighter.DefaultHighlightPainter(Color(255, 255, 0, 100))
                 area.getHighlighter().addHighlight(offset, offset + length, painter)
                 
-                # Scroll to location reliably
+                # Scroll to location with multi-step reliability
                 def scroll_to():
-                    area.setCaretPosition(offset)
-                    # Manually ensure visibility
-                    rect = area.modelToView(offset)
-                    if rect:
-                        area.scrollRectToVisible(rect)
+                    try:
+                        area.setCaretPosition(offset)
+                        view_rect = area.modelToView(offset)
+                        if view_rect:
+                            # Scroll a bit higher than the line for context
+                            view_rect.y = max(0, view_rect.y - 100)
+                            view_rect.height += 200
+                            area.scrollRectToVisible(view_rect)
+                    except: pass
                 
                 SwingUtilities.invokeLater(scroll_to)
-        except Exception as e:
-            pass
+        except: pass
             
         scroll = JScrollPane(area)
         scroll.setBorder(None)
@@ -454,9 +618,12 @@ class TableSelectionListener(ListSelectionListener):
         if not event.getValueIsAdjusting():
             row = self.table.getSelectedRow()
             if row >= 0:
-                model_row = self.table.convertRowIndexToModel(row)
-                value = self.table.getModel().getValueAt(model_row, 0)
-                self.panel.update_preview(str(value))
+                try:
+                    model_row = self.table.convertRowIndexToModel(row)
+                    value = self.table.getModel().getValueAt(model_row, 0)
+                    if value:
+                        self.panel.update_preview(str(value).strip())
+                except: pass
 
 
 class TableMouseListener(MouseAdapter):
@@ -478,6 +645,28 @@ class SearchKeyListener(KeyListener):
     def keyTyped(self, event): pass
 
 
+class TableKeyListener(KeyListener):
+    """Handle Ctrl+C for table copying."""
+    def __init__(self, panel):
+        self.panel = panel
+        
+    def keyPressed(self, event):
+        if event.isControlDown():
+            if event.getKeyCode() == KeyEvent.VK_C:
+                self.panel.copy_selected(event.getSource())
+                event.consume()
+            elif event.getKeyCode() == KeyEvent.VK_A:
+                # Custom Select All: only select the Value column
+                table = event.getSource()
+                if table.getRowCount() > 0:
+                    table.setColumnSelectionInterval(0, 0)
+                    table.setRowSelectionInterval(0, table.getRowCount() - 1)
+                event.consume()
+            
+    def keyReleased(self, event): pass
+    def keyTyped(self, event): pass
+
+
 class FilterAction(ActionListener):
     def __init__(self, panel):
         self.panel = panel
@@ -492,11 +681,22 @@ class ViewSourceAction(ActionListener):
         self.panel.view_source_for_selected()
 
 
-class CopyAction(ActionListener):
+class CopyAction(AbstractAction):
     def __init__(self, panel):
         self.panel = panel
     def actionPerformed(self, event):
         self.panel.copy_selected()
+
+class SelectAllAction(AbstractAction):
+    def __init__(self, panel):
+        self.panel = panel
+    def actionPerformed(self, event):
+        # Programmatically select all rows in current table
+        table = self.panel._get_current_table()
+        if table and table.getRowCount() > 0:
+            table.setRowSelectionInterval(0, table.getRowCount() - 1)
+            # Optional: Select only first column to match "Value Only" feel
+            table.setColumnSelectionInterval(0, 0)
 
 
 class CopyAllAction(ActionListener):
