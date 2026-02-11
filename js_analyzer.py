@@ -6,15 +6,19 @@ Focused JavaScript analysis with strict endpoint filtering to reduce noise.
 
 from burp import IBurpExtender, IContextMenuFactory, ITab
 
-from javax.swing import JMenuItem
+from javax.swing import JMenuItem, JMenu
 from java.awt.event import ActionListener
 from java.util import ArrayList
 from java.io import PrintWriter
+from java.lang import Thread
 
 import sys
 import os
 import re
 import inspect
+import base64
+import binascii
+import math
 
 # Add extension directory to path
 try:
@@ -227,7 +231,44 @@ ENDPOINT_PATTERNS = [
     re.compile(r'["\'](.*\.(?:git|svn|hg|bak|old|backup|swp))["\']', re.IGNORECASE),
     re.compile(r'["\'](.*\.(?:sql|dump|tar|gz|zip|7z|rar))["\']', re.IGNORECASE),
     re.compile(r'["\'](.*\.(?:env|config|conf|ini|properties|yml|yaml|json))["\']', re.IGNORECASE),
+
+    # --- ENHANCED PATTERNS ---
+    # Relative paths (more aggressive)
+    re.compile(r'["\'](/[a-zA-Z0-9_-]{3,}/[a-zA-Z0-9/_-]{3,})["\']'),
+    re.compile(r'["\'](/[a-zA-Z0-9_-]{3,}\.php|\.aspx|\.asp|\.jsp|\.json)["\']', re.IGNORECASE),
+    
+    # JS fetch/axios/ajax calls
+    re.compile(r'(?:fetch|axios|get|post|put|delete|request)\s*\(\s*["\']([^"\']+)["\']', re.IGNORECASE),
+    re.compile(r'(?:url|path|endpoint|uri)\s*[:=]\s*["\']([^"\']+)["\']', re.IGNORECASE),
+    
+    # Template literals (partial match)
+    re.compile(r'`(/[^`]+)`'),
+
+    # --- BROAD RELATIVE PATHS ---
+    re.compile(r'["\'](/[a-zA-Z0-9_\-\.\/\?\#]{2,})["\']'),
+    
+    # Template strings and modern JS variations
+    re.compile(r'\$\{[`"\']?(/[^`"\']+)[`"\']?\}'),
+    re.compile(r'(?:get|post|put|delete|patch)\s*\(\s*[`"\']([^`"\']+)[`"\']', re.IGNORECASE),
+    re.compile(r'(?:url|path|endpoint|uri|href)\s*[:=]\s*[`"\']([^`"\']+)[`"\']', re.IGNORECASE),
+    re.compile(r'\.action\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE),
+    re.compile(r'\.src\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE),
 ]
+
+# LinkFinder fallback regex (very broad)
+LINKFINDER_PATTERN = re.compile(
+    r'(?:"|\')'                                 # Start delimiter
+    r'('                                        # Group 1
+    r'((?:[a-zA-Z]{1,10}://|//)[^"\'/]{1,}\.[a-zA-Z]{2,}[^"\'><]{0,})' # Full URL
+    r'|'
+    r'((?:/|\.\.?/)[^"\'><,;| *()(%%$^!]{1,})'  # Relative path
+    r'|'
+    r'([a-zA-Z0-9_\-/]{1,}/[a-zA-Z0-9_\-/]{1,}\.(?:[a-zA-Z]{1,4}|action)(?:[\?|#][^"\'><]{0,}|))' # File with extension
+    r'|'
+    r'([a-zA-Z0-9_\-/]{1,}/[a-zA-Z0-9_\-/]{3,}(?:[\?|#][^"\'><]{0,}|))' # Generic path
+    r')'
+    r'(?:"|\')'                                 # End delimiter
+)
 
 # URL patterns - full URLs
 URL_PATTERNS = [
@@ -486,16 +527,22 @@ SECRET_PATTERNS = [
     (re.compile(r'(jenkins[-\s]?token[=\s:]+["\']?[0-9a-f]{32}["\']?)'), "Jenkins Token"),
     (re.compile(r'(gitlab[-\s]?token[=\s:]+["\']?glpat-[0-9a-zA-Z\-_]{20,}["\']?)'), "GitLab Personal Access Token"),
     (re.compile(r'(bitbucket[-\s]?token[=\s:]+["\']?[0-9a-zA-Z]{64}["\']?)'), "Bitbucket Token"),
-    (re.compile(r'(npm[-\s]?token[=\s:]+["\']?npm_[0-9a-zA-Z\-_]{36}["\']?)'), "NPM Token"),  # Fixed line
+    (re.compile(r'(npm[-\s]?token[=\s:]+["\']?npm_[0-9a-zA-Z\-_]{36}["\']?)'), "NPM Token"),
     (re.compile(r'(pypi[-\s]?token[=\s:]+["\']?pypi-[0-9a-zA-Z\-_]{40,}["\']?)'), "PyPI Token"),
     
-    # Database & Storage - Extended
+    # Modern Platforms
+    (re.compile(r'(clerk[-\s]?api[-\s]?key[=\s:]+["\']?sk_(?:live|test)_[a-zA-Z0-9]{32,}["\']?)'), "Clerk API Key"),
+    (re.compile(r'(supabase[-\s]?anon[-\s]?key[=\s:]+["\']?eyJ[a-zA-Z0-9\._\-]{100,}["\']?)'), "Supabase Anon Key"),
+    (re.compile(r'(supabase[-\s]?service[-\s]?role[=\s:]+["\']?eyJ[a-zA-Z0-9\._\-]{100,}["\']?)'), "Supabase Service Role"),
+    (re.compile(r'(vercel[-\s]?token[=\s:]+["\']?[0-9a-zA-Z]{24}["\']?)'), "Vercel Token"),
+    
+    # Database & Storage
     (re.compile(r'(redis://:[^\s@]+@[^\s"\']+)'), "Redis URI with Password"),
     (re.compile(r'(redis[-\s]?password[=\s:]+["\']?[^\s"\']{6,}["\']?)'), "Redis Password"),
     (re.compile(r'(mysql://[^\s"\']+:[^\s"\']+@[^\s"\']+)'), "MySQL URI with Credentials"),
     (re.compile(r'(mysql[-\s]?password[=\s:]+["\']?[^\s"\']{6,}["\']?)'), "MySQL Password"),
     (re.compile(r'(cassandra[-\s]?password[=\s:]+["\']?[^\s"\']{6,}["\']?)'), "Cassandra Password"),
-    (re.compile(r'(amazonaws\.com/[^\s"\']*[=\s:]+["\']?[0-9a-zA-Z/+]{40,}["\']?)'), "AWS S3/CloudFront"),
+    (re.compile(r'(amazonaws\.com/[^\s"\']*[=\s:]+["\']?[0-9a-zA-Z/+]{40,})'), "AWS S3/CloudFront"),
     (re.compile(r'(firebase[-\s]?api[-\s]?key[=\s:]+["\']?AIza[0-9A-Za-z\-_]{35}["\']?)'), "Firebase API Key"),
     (re.compile(r'(firebase[-\s]?database[-\s]?url[=\s:]+["\']?https://[^\s"\']+firebaseio\.com["\']?)'), "Firebase Database URL"),
     
@@ -504,54 +551,60 @@ SECRET_PATTERNS = [
     (re.compile(r'(sentry[-\s]?dsn[=\s:]+["\']?https://[0-9a-f]{32}@[^\s"\']+["\']?)'), "Sentry DSN"),
     (re.compile(r'(datadog[-\s]?api[-\s]?key[=\s:]+["\']?[0-9a-f]{32}["\']?)'), "Datadog API Key"),
     (re.compile(r'(splunk[-\s]?token[=\s:]+["\']?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}["\']?)'), "Splunk Token"),
-    (re.compile(r'(logdna[-\s]?ingestion[-\s]?key[=\s:]+["\']?[0-9a-f]{32}["\']?)'), "LogDNA Ingestion Key"),
     
-    # Email Services - Extended
+    # Email Services
     (re.compile(r'(mailgun[-\s]?api[-\s]?key[=\s:]+["\']?key-[0-9a-f]{32}["\']?)'), "Mailgun API Key"),
     (re.compile(r'(ses[-\s]?smtp[-\s]?password[=\s:]+["\']?[0-9a-zA-Z/+]{20,}["\']?)'), "AWS SES SMTP Password"),
     (re.compile(r'(sparkpost[-\s]?api[-\s]?key[=\s:]+["\']?[0-9a-f]{40}["\']?)'), "SparkPost API Key"),
     (re.compile(r'(postmark[-\s]?server[-\s]?token[=\s:]+["\']?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}["\']?)'), "Postmark Server Token"),
     (re.compile(r'(mailchimp[-\s]?api[-\s]?key[=\s:]+["\']?[0-9a-f]{32}-us[0-9]{1,2}["\']?)'), "Mailchimp API Key"),
     
-    # Content Delivery & CDN
-    (re.compile(r'(cloudflare[-\s]?api[-\s]?key[=\s:]+["\']?[0-9a-f]{37}["\']?)'), "Cloudflare API Key"),
-    (re.compile(r'(cloudflare[-\s]?auth[-\s]?key[=\s:]+["\']?[0-9a-f]{37}["\']?)'), "Cloudflare Auth Key"),
-    (re.compile(r'(fastly[-\s]?api[-\s]?key[=\s:]+["\']?[0-9a-zA-Z]{32}["\']?)'), "Fastly API Key"),
+    # Cloud/Infrastructure
+    (re.compile(r'(AKIA[0-9A-Z]{16,20})'), "AWS Access Key"),
+    (re.compile(r'(ASIA[0-9A-Z]{16,20})'), "AWS Temporary Access Key"),
+    (re.compile(r'(AIza[0-9A-Za-z\-_]{35,45})'), "Google API Key"),
+    (re.compile(r'(sk_test_[0-9a-zA-Z]{24,})'), "Stripe Test Secret Key"),
+    (re.compile(r'(sk_live_[0-9a-zA-Z]{24,})'), "Stripe Live Secret Key"),
+    (re.compile(r'(xox[baprs]-[0-9a-zA-Z]{10,48})'), "Slack Token"),
+    (re.compile(r'(ghp_[0-9a-zA-Z]{36})'), "GitHub PAT"),
+    (re.compile(r'(twilio[-\s]?auth[-\s]?token[=\s:]+["\']?[0-9a-f]{32}["\']?)'), "Twilio Auth Token"),
+    (re.compile(r'(sendgrid[-\s]?api[-\s]?key[=\s:]+["\']?SG\.[0-9a-zA-Z\-_]{22}\.[0-9a-zA-Z\-_]{43}["\']?)'), "SendGrid API Key"),
     
-    # Map & Location Services
-    (re.compile(r'(mapbox[-\s]?access[-\s]?token[=\s:]+["\']?pk\.[0-9a-zA-Z\-_]{100,}["\']?)'), "Mapbox Access Token"),
-    (re.compile(r'(google[-\s]?maps[-\s]?api[-\s]?key[=\s:]+["\']?AIza[0-9A-Za-z\-_]{35}["\']?)'), "Google Maps API Key"),
-    (re.compile(r'(here[-\s]?api[-\s]?key[=\s:]+["\']?[0-9a-zA-Z\-_]{43}["\']?)'), "HERE API Key"),
-    
-    # AI/ML Services
-    (re.compile(r'(openai[-\s]?api[-\s]?key[=\s:]+["\']?sk-[0-9a-zA-Z]{48}["\']?)'), "OpenAI API Key"),
-    (re.compile(r'(anthropic[-\s]?api[-\s]?key[=\s:]+["\']?sk-ant-[0-9a-zA-Z\-_]{95}["\']?)'), "Anthropic API Key"),
-    (re.compile(r'(cohere[-\s]?api[-\s]?key[=\s:]+["\']?[0-9a-zA-Z]{40}["\']?)'), "Cohere API Key"),
-    (re.compile(r'(huggingface[-\s]?token[=\s:]+["\']?hf_[0-9a-zA-Z]{34}["\']?)'), "Hugging Face Token"),
-    (re.compile(r'(replicate[-\s]?api[-\s]?token[=\s:]+["\']?r8_[0-9a-zA-Z]{37}["\']?)'), "Replicate API Token"),
-    
-    # Generic Patterns - Enhanced
-    (re.compile(r'([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'), "UUID"),
-    (re.compile(r'([0-9a-zA-Z]{32,})'), "Generic Long Token"),
-    (re.compile(r'(api[-\s_]?key[=\s:]+["\']?[0-9a-zA-Z\-_]{20,}["\']?)'), "Generic API Key"),
-    (re.compile(r'(secret[-\s_]?key[=\s:]+["\']?[0-9a-zA-Z\-_]{20,}["\']?)'), "Generic Secret Key"),
-    (re.compile(r'(password[=\s:]+["\']?[^\s"\']{6,}["\']?)'), "Password Field"),
-    (re.compile(r'(token[=\s:]+["\']?[0-9a-zA-Z\-_]{20,}["\']?)'), "Generic Token"),
-    (re.compile(r'(access[-\s_]?token[=\s:]+["\']?[0-9a-zA-Z\-_]{20,}["\']?)'), "Access Token"),
-    (re.compile(r'(refresh[-\s_]?token[=\s:]+["\']?[0-9a-zA-Z\-_]{20,}["\']?)'), "Refresh Token"),
-    
-    # File-specific patterns
-    (re.compile(r'(\.pem$|\.key$|\.priv$|\.cert$|\.crt$)', re.IGNORECASE), "Certificate/Key File"),
-    (re.compile(r'(\.env$|\.env\.\w+$)', re.IGNORECASE), "Environment File"),
-    
-    # High entropy strings (increased length to reduce noise)
-    (re.compile(r'([A-Za-z0-9+/]{64,}[=]{0,2})'), "Potential Base64 Secret"),
-    
-    # Config file specific
-    (re.compile(r'(\$[A-Z_]{5,}[=\s:]+["\']?[0-9a-zA-Z\-_]{20,}["\']?)'), "Config Variable with Secret"),
-    (re.compile(r'([A-Z_]{5,}_SECRET[=\s:]+["\']?[0-9a-zA-Z\-_]{20,}["\']?)'), "Secret Environment Variable"),
-    (re.compile(r'([A-Z_]{5,}_KEY[=\s:]+["\']?[0-9a-zA-Z\-_]{20,}["\']?)'), "Key Environment Variable"),
-    (re.compile(r'([A-Z_]{5,}_TOKEN[=\s:]+["\']?[0-9a-zA-Z\-_]{20,}["\']?)'), "Token Environment Variable"),
+    # Generic Patterns - Extremely Aggressive for Tokens & Assignments
+    (re.compile(r'(?:api[-\s_]?key|auth[-\s_]?token|access[-\s_]?token|secret[-\s_]?key|app[-\s_]?key|session[-\s_]?id|user[-\s_]?token|token|key|secret)[=\s:]+["\']?([0-9a-zA-Z\-_]{16,})["\']?', re.IGNORECASE), "Sensitive Assignment Pattern"),
+    (re.compile(r'["\'](eyJ[a-zA-Z0-9\-_]+\.eyJ[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]{20,})["\']'), "JWT Token"),
+    (re.compile(r'["\']([a-zA-Z0-9\-_]{32,})["\']'), "Generic String Token"),
+    (re.compile(r'(ghp_[0-9a-zA-Z]{36})'), "GitHub PAT"),
+    (re.compile(r'(sk_test_[0-9a-zA-Z]{24,})'), "Stripe Test Secret"),
+    (re.compile(r'(sk_live_[0-9a-zA-Z]{24,})'), "Stripe Live Secret"),
+]
+
+# Cloud Patterns
+CLOUD_PATTERNS = [
+    (re.compile(r'([a-z0-9.-]+\.s3(?:-[a-z0-9-]+)?\.amazonaws\.com)'), "AWS S3 Bucket"),
+    (re.compile(r'([a-z0-9.-]+\.blob\.core\.windows\.net)'), "Azure Blob Storage"),
+    (re.compile(r'([a-z0-9.-]+\.file\.core\.windows\.net)'), "Azure File Storage"),
+    (re.compile(r'([a-z0-9.-]+\.queue\.core\.windows\.net)'), "Azure Queue Storage"),
+    (re.compile(r'([a-z0-9.-]+\.table\.core\.windows\.net)'), "Azure Table Storage"),
+    (re.compile(r'(storage\.googleapis\.com/[a-z0-9.-]+)'), "Google Cloud Storage"),
+    (re.compile(r'([a-z0-9.-]+\.storage\.googleapis\.com)'), "Google Cloud Storage Bucket"),
+]
+
+# Subdomain Pattern - Only match within quotes to avoid JS code noise
+SUBDOMAIN_PATTERN = re.compile(r'["\'](([a-zA-Z0-9-_]+\.)+[a-zA-Z]{2,10})["\']')
+
+# Valid TLDs for subdomain filtering
+VALID_TLDS = {
+    'com', 'net', 'org', 'edu', 'gov', 'mil', 'int', 'io', 'co', 'ai', 'ly',
+    'app', 'dev', 'info', 'biz', 'icu', 'me', 'tv', 'xyz', 'cloud', 'aws',
+    'online', 'site', 'tech', 'store', 'shop', 'blog', 'inc', 'agency',
+    'us', 'uk', 'ca', 'de', 'fr', 'jp', 'cn', 'in', 'ru', 'br', 'au', 'eu'
+}
+
+# Keyword Patterns for Mining
+KEYWORD_PATTERNS = [
+    re.compile(r'(\b(?:api_?key|secret|token|password|admin|auth|creds|credential|login|config|env|internal|private|root)\b)', re.IGNORECASE),
+    re.compile(r'(\b(?:sourceMappingURL|sourceURL)\b)'),
 ]
 
 # Email pattern
@@ -1086,6 +1139,14 @@ NOISE_PATTERNS = [
     re.compile(r'^sha\d*$'),  # sha, sha1, sha256
     re.compile(r'^aes$|^des$|^md5$'),  # Crypto modules
     
+    # MIME Types and Technical Noise
+    re.compile(r'^(?:text|application|image|audio|video|font|model|message)/[a-zA-Z0-9\-\.\+]+$', re.IGNORECASE),
+    re.compile(r'^[A-Z][a-zA-Z0-9]+/[A-Z][a-zA-Z0-9]+$'), # Etc/UTC, Africa/Cairo
+    re.compile(r'^iPhone$|^iPod$|^iPad$|^Android$|^Windows$|^Linux$|^Macintosh$', re.IGNORECASE),
+    re.compile(r'^utf-8$|^ascii$|^iso-8859-1$', re.IGNORECASE),
+    re.compile(r'^GET$|^POST$|^PUT$|^DELETE$|^PATCH$|^OPTIONS$|^HEAD$'), # HTTP Methods
+    re.compile(r'^[a-z0-9]{32}$|^[a-z0-9]{40}$|^[a-z0-9]{64}$'), # Hashes with no context
+    
     # PDF internal structure
     re.compile(r'^/[A-Z][a-z]+\s'),  # /Type /Font, /Filter /Standard
     re.compile(r'^/[A-Z][a-z]+$'),  # /Parent, /Kids, /Resources
@@ -1169,259 +1230,343 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         try:
             messages = invocation.getSelectedMessages()
             if messages and len(messages) > 0:
-                item = JMenuItem("Analyze JS with JS Analyzer")
-                item.addActionListener(AnalyzeAction(self, invocation))
-                menu.add(item)
+                # Main Menu
+                main_menu = JMenu("JS Analyzer")
+                
+                # Analyze All
+                all_item = JMenuItem("Analyze All")
+                all_item.addActionListener(AnalyzeAction(self, invocation, "all"))
+                main_menu.add(all_item)
+                
+                main_menu.addSeparator()
+                
+                # Selective modes
+                categories = [
+                    ("Endpoints Only", "endpoints"),
+                    ("Secrets Only", "secrets"),
+                    ("URLs Only", "urls"),
+                    ("Subdomains Only", "subdomains"),
+                    ("Cloud Storage Only", "cloud"),
+                    ("Emails & Files", "emails_files")
+                ]
+                
+                for label, mode in categories:
+                    item = JMenuItem(label)
+                    item.addActionListener(AnalyzeAction(self, invocation, mode))
+                    main_menu.add(item)
+                
+                menu.add(main_menu)
         except Exception as e:
             self._log("Menu error: " + str(e))
         return menu
     
-    def analyze_response(self, message_info):
-        """Analyze a response."""
-        response = message_info.getResponse()
-        if not response:
-            return
-        
-        # Get source URL
+    def analyze_response(self, message_info, mode="all"):
+        """Analyze a response with deep pre-processing and error handling."""
         try:
-            req_info = self._helpers.analyzeRequest(message_info)
-            url = str(req_info.getUrl())
-            source_name = url.split('/')[-1].split('?')[0] if '/' in url else url
-            if len(source_name) > 40:
-                source_name = source_name[:40] + "..."
-        except:
-            url = "Unknown"
-            source_name = "Unknown"
-        
-        # Get response body
-        resp_info = self._helpers.analyzeResponse(response)
-        body_offset = resp_info.getBodyOffset()
-        body = self._helpers.bytesToString(response[body_offset:])
-        
-        if len(body) < 50:
-            return
-        
-        self._log("Analyzing: " + source_name)
-        
-        new_findings = []
-        
-        # Store source body for later viewing
-        self.source_map[source_name] = body
-        
-        # 1. Extract endpoints
-        for pattern in ENDPOINT_PATTERNS:
-            for match in pattern.finditer(body):
-                value = match.group(1).strip()
-                if self._is_valid_endpoint(value):
-                    finding = self._add_finding("endpoints", value, source_name, match.start(1))
-                    if finding:
-                        new_findings.append(finding)
-        
-        # 2. URLs
-        for pattern in URL_PATTERNS:
-            for match in pattern.finditer(body):
-                value = match.group(1).strip() if match.lastindex else match.group(0).strip()
-                start_offset = match.start(1) if match.lastindex else match.start(0)
-                if self._is_valid_url(value):
-                    finding = self._add_finding("urls", value, source_name, start_offset)
-                    if finding:
-                        new_findings.append(finding)
-        
-        # 3. Secrets
-        for pattern, _ in SECRET_PATTERNS:
-            for match in pattern.finditer(body):
-                value = match.group(1).strip() if match.lastindex else match.group(0).strip()
-                start_offset = match.start(1) if match.lastindex else match.start(0)
-                if self._is_valid_secret(value):
-                    # Show full secret as requested by user
-                    finding = self._add_finding("secrets", value, source_name, start_offset)
-                    if finding:
-                        new_findings.append(finding)
-        
-        # 4. Emails
-        for match in EMAIL_PATTERN.finditer(body):
-            value = match.group(1).strip()
-            if self._is_valid_email(value):
-                finding = self._add_finding("emails", value, source_name, match.start(1))
-                if finding:
-                    new_findings.append(finding)
-        
-        # 5. Files (sensitive file references)
-        for pattern in FILE_PATTERNS:
-            for match in pattern.finditer(body):
-                value = match.group(1).strip() if match.lastindex else match.group(0).strip()
-                start_offset = match.start(1) if match.lastindex else match.start(0)
-                if self._is_valid_file(value):
-                    finding = self._add_finding("files", value, source_name, start_offset)
-                    if finding:
-                        new_findings.append(finding)
-        
-        # Update UI
-        if new_findings:
-            self._log("Found %d new items" % len(new_findings))
-            self.panel.add_findings(new_findings, source_name)
-        else:
-            self._log("No new findings")
+            response = message_info.getResponse()
+            if not response:
+                return
+            
+            # Get source URL
+            try:
+                req_info = self._helpers.analyzeRequest(message_info)
+                url = str(req_info.getUrl())
+                source_name = url.split('/')[-1].split('?')[0] if '/' in url else url
+                if len(source_name) > 40:
+                    source_name = source_name[:40] + "..."
+            except:
+                url = "Unknown"
+                source_name = "Unknown"
+            
+            # Get response body
+            resp_info = self._helpers.analyzeResponse(response)
+            body_offset = resp_info.getBodyOffset()
+            raw_body = self._helpers.bytesToString(response[body_offset:])
+            
+            if len(raw_body) < 50:
+                return
+            
+            self._log("Analyzing (%s): %s" % (mode, source_name))
+            
+            # Pre-process body to decode escapes (\uXXXX, \xXX)
+            # This is critical for discovery in minified JS
+            body = self._preprocess_body(raw_body)
+            
+            new_findings = []
+            skipped_count = 0
+            
+            # Store source body for later viewing 
+            # Use full URL to avoid collisions when different sites have same filename
+            self.source_map[url] = body
+            
+            # Determine what to run
+            run_endpoints = mode in ["all", "endpoints"]
+            run_urls = mode in ["all", "urls"]
+            run_secrets = mode in ["all", "secrets"]
+            run_emails = mode in ["all", "emails_files"]
+            run_files = mode in ["all", "emails_files"]
+            run_cloud = mode in ["all", "cloud"]
+            run_subdomains = mode in ["all", "subdomains"]
+            run_keywords = mode in ["all", "keywords"] or mode == "all"
+            
+            # --- PHASE 1: Endpoints (Specific + Broad) ---
+            # --- PHASE 1: Endpoints (Specific + Broad) ---
+            if run_endpoints:
+                try:
+                    all_patterns = ENDPOINT_PATTERNS + [LINKFINDER_PATTERN]
+                    for pattern in all_patterns:
+                        for match in pattern.finditer(body):
+                            value = match.group(1).strip() if match.lastindex else match.group(0).strip()
+                            if self._is_valid_endpoint(value):
+                                category = self._get_best_category(value) if pattern == LINKFINDER_PATTERN else "endpoints"
+                                detail = self._decode_base64(value)
+                                finding = self._add_finding(category, value, url, match.start(1) if match.lastindex else match.start(0), detail, source_name)
+                                if finding: new_findings.append(finding)
+                except Exception as e:
+                    self._log("Endpoint Pass Failed: %s" % str(e))
+
+            # --- PHASE 2: URLs ---
+            if run_urls or mode == "all":
+                try:
+                    for pattern in URL_PATTERNS:
+                        for match in pattern.finditer(body):
+                            value = match.group(1).strip() if match.lastindex else match.group(0).strip()
+                            if self._is_valid_url(value):
+                                finding = self._add_finding("urls", value, url, match.start(1) if match.lastindex else match.start(0), self._decode_base64(value), source_name)
+                                if finding: new_findings.append(finding)
+                except Exception as e:
+                    self._log("URL Pass Failed: %s" % str(e))
+            
+            # --- PHASE 3: Secrets ---
+            if run_secrets or mode == "all":
+                try:
+                    for pattern, secret_type in SECRET_PATTERNS:
+                        for match in pattern.finditer(body):
+                            value = match.group(1).strip() if match.lastindex else match.group(0).strip()
+                            if self._is_valid_secret(value):
+                                entropy = self._calculate_entropy(value)
+                                decoded = self._decode_base64(value)
+                                detail = "%s (Entropy: %.2f)" % (secret_type, entropy)
+                                if decoded: detail += " | Decoded: %s" % decoded
+                                finding = self._add_finding("secrets", value, url, match.start(1) if match.lastindex else match.start(0), detail, source_name)
+                                if finding: new_findings.append(finding)
+                except Exception as e:
+                    self._log("Secret Pass Failed: %s" % str(e))
+            
+            # --- PHASE 4: Emails ---
+            if run_emails or mode == "all":
+                try:
+                    for match in EMAIL_PATTERN.finditer(body):
+                        value = match.group(1).strip()
+                        if self._is_valid_email(value):
+                            finding = self._add_finding("emails", value, url, match.start(1), "", source_name)
+                            if finding: new_findings.append(finding)
+                except Exception as e:
+                    self._log("Email Pass Failed: %s" % str(e))
+            
+            # --- PHASE 5: Files ---
+            if run_files or mode == "all":
+                try:
+                    for pattern in FILE_PATTERNS:
+                        for match in pattern.finditer(body):
+                            value = match.group(1).strip() if match.lastindex else match.group(0).strip()
+                            if self._is_valid_file(value):
+                                finding = self._add_finding("files", value, url, match.start(1) if match.lastindex else match.start(0), "", source_name)
+                                if finding: new_findings.append(finding)
+                except Exception as e:
+                    self._log("File Pass Failed: %s" % str(e))
+            
+            # --- PHASE 6: Cloud Storage ---
+            if run_cloud or mode == "all":
+                try:
+                    for pattern, cloud_type in CLOUD_PATTERNS:
+                        for match in pattern.finditer(body):
+                            value = match.group(1).strip()
+                            finding = self._add_finding("cloud", value, url, match.start(1), cloud_type, source_name)
+                            if finding: new_findings.append(finding)
+                except Exception as e:
+                    self._log("Cloud Pass Failed: %s" % str(e))
+
+            # --- PHASE 7: Subdomains ---
+            if run_subdomains or mode == "all":
+                try:
+                    for match in SUBDOMAIN_PATTERN.finditer(body):
+                        value = match.group(1).strip()
+                        if self._is_valid_subdomain(value):
+                            finding = self._add_finding("subdomains", value, url, match.start(1), "", source_name)
+                            if finding: new_findings.append(finding)
+                except Exception as e:
+                    self._log("Subdomain Pass Failed: %s" % str(e))
+
+            # --- PHASE 8: Keywords ---
+            if run_keywords or mode == "all":
+                try:
+                    for pattern in KEYWORD_PATTERNS:
+                        for match in pattern.finditer(body):
+                            value = match.group(1).strip()
+                            finding = self._add_finding("keywords", value, url, match.start(1), "", source_name)
+                            if finding: new_findings.append(finding)
+                except Exception as e:
+                    self._log("Keyword Pass Failed: %s" % str(e))
+
+            # Final UI Update
+            # Final UI Update
+            if new_findings:
+                self._log("Analysis Complete: %d items found." % len(new_findings))
+                self.panel.add_findings(new_findings, source_name)
+            else:
+                self._log("No findings found in source.")
+                
+        except Exception as e:
+            self._log("Analysis Crashed: %s" % str(e))
+            import traceback
+            traceback.print_exc(file=sys.stderr)
     
-    def _add_finding(self, category, value, source, offset=0):
-        """Add a finding if not duplicate."""
-        key = category + ":" + value
+    def _add_finding(self, category, value, url, offset=0, detail="", source_name=""):
+        """Add a finding with global deduplication and metadata mapping."""
+        key = str(category) + ":" + str(value)
         if key in self.seen_values:
             return None
-        
+            
         self.seen_values.add(key)
         finding = {
             "category": category,
             "value": value,
-            "source": source,
+            "source": source_name, # display name (filename)
+            "url": url,           # full key for source_map (URL)
             "offset": offset,
+            "detail": detail
         }
         self.all_findings.append(finding)
         return finding
     
-    def get_source_code(self, source_name):
-        """Retrieve source code for a given source name."""
-        return self.source_map.get(source_name, "")
-    
+    def _preprocess_body(self, body):
+        """Decode Unicode and Hex escapes in JS body for deep discovery."""
+        if not body: return ""
+        def decode_unicode(match):
+            try: return unichr(int(match.group(1), 16)) if sys.version_info[0] < 3 else chr(int(match.group(1), 16))
+            except: return match.group(0)
+        body = re.sub(r'\\u([0-9a-fA-F]{4})', decode_unicode, body)
+        def decode_hex(match):
+            try: return unichr(int(match.group(1), 16)) if sys.version_info[0] < 3 else chr(int(match.group(1), 16))
+            except: return match.group(0)
+        body = re.sub(r'\\x([0-9a-fA-F]{2})', decode_hex, body)
+        return body
+
+    def _decode_base64(self, value):
+        """Attempt to decode base64 if it looks like useful text."""
+        if not value or len(value) < 8 or not re.match(r'^[A-Za-z0-9+/=]+$', value):
+            return None
+        try:
+            if len(value) % 4 != 0: return None
+            decoded = base64.b64decode(value)
+            if all(32 <= ord(c) <= 126 or c in '\n\r\t' for c in decoded):
+                return decoded.decode('utf-8', 'ignore')
+        except: pass
+        return None
+
+    def _is_static_noise(self, value):
+        """Universal filter for static asset noise."""
+        if not value: return True
+        static_regex = r'\.(?:png|jpg|jpeg|gif|svg|webp|ico|css|scss|woff2?|ttf|eot|otf|bmp|mp3|mp4|avi|mov|wmv|flv|swf|exe|zip|rar|7z|tar|gz|iso|dmg|bin|apk|msi|map|pdf|docx?|xlsx?|pptx?)([?#].*)?$'
+        return bool(re.search(static_regex, value, re.IGNORECASE))
+
+    def _calculate_entropy(self, text):
+        """Calculate Shannon Entropy for random key detection."""
+        if not text: return 0
+        entropy = 0
+        for x in range(256):
+            p_x = float(text.count(chr(x))) / len(text)
+            if p_x > 0: entropy += - p_x * math.log(p_x, 2)
+        return entropy
+
     def _is_valid_endpoint(self, value):
-        """Strict endpoint validation - reject noise."""
-        if not value or len(value) < 3:
-            return False
+        if not value or len(value) < 3 or self._is_static_noise(value): return False
         
-        # Check exact matches first
-        if value in NOISE_STRINGS:
-            return False
-        
-        # Check noise patterns
-        for pattern in NOISE_PATTERNS:
-            if pattern.search(value):
-                return False
-        
-        # Must start with / and have some path
-        if not value.startswith('/'):
-            return False
-        
-        # Skip if just a single segment with no meaning
-        parts = value.split('/')
-        if len(parts) < 2 or all(len(p) < 2 for p in parts if p):
-            return False
-        
-        return True
-    
-    def _is_valid_url(self, value):
-        """Strict URL validation."""
-        if not value or len(value) < 15:
-            return False
-        
+        # Explicitly filter out JS/Source Map/Static files from "Endpoints"
+        # These belong in "Files" or "URLs", not API endpoints
         val_lower = value.lower()
         
-        # Check for noise domains
-        for domain in NOISE_DOMAINS:
-            if domain in val_lower:
-                return False
+        # Strip query parameters and fragments for extension check
+        clean_val = val_lower.split('?')[0].split('#')[0]
         
-        # Skip if contains placeholder patterns
-        if '{' in value or 'undefined' in val_lower or 'null' in val_lower:
+        if clean_val.endswith('.js') or clean_val.endswith('.map') or clean_val.endswith('.css') or \
+           clean_val.endswith('.png') or clean_val.endswith('.svg') or clean_val.endswith('.ico') or \
+           clean_val.endswith('.woff') or clean_val.endswith('.woff2') or clean_val.endswith('.ttf'):
             return False
-        
-        # Skip data URIs
-        if val_lower.startswith('data:'):
-            return False
-        
-        # Skip if ends with common static extensions
-        if any(val_lower.endswith(ext) for ext in ['.css', '.png', '.jpg', '.gif', '.svg', '.woff', '.ttf']):
-            return False
-        
-        return True
-    
+            
+        if any(x in val_lower for x in ['w3.org', 'schema.org', 'xmlns:', 'utf-8']): return False
+        if '/' in value or '\\' in value or value.startswith('.'):
+            for pattern in NOISE_PATTERNS:
+                if pattern.search(value): return False
+            return True
+        return False
+
     def _is_valid_secret(self, value):
-        """Validate secrets."""
-        if not value or len(value) < 10:
-            return False
-        
+        if not value or len(value) < 10 or self._is_static_noise(value): return False
         val_lower = value.lower()
-        
-        # Filter placeholders
-        if any(x in val_lower for x in ['example', 'placeholder', 'your', 'xxxx', 'test', 'your-']):
-            return False
-            
-        # Filter common character sets
-        if 'abcdefg' in val_lower or '0123456' in val_lower:
-            return False
-            
-        # Filter GTM/CamelCase noise (Google Tag Manager, common JS events)
-        if any(value.startswith(x) for x in [
-            'enableAuto', 'unsubscribe', 'onElement', 'onForm', 
-            'onYouTube', 'crossContainer', 'js'
-        ]):
-            return False
-            
-        # Filter strings that are too "regular" (mostly repetition)
-        if len(set(value)) < 6:
-            return False
-            
-        # Skip if it looks like a hex string that is too regular (like a color or padding)
-        if all(c in '0123456789abcdefABCDEF' for c in value) and len(set(value)) < 4:
-            return False
-        
+        if any(x in val_lower for x in ['example', 'placeholder', 'your-', 'xxxx', 'test', 'function(', 'return']): return False
+        # Entropy & Character diversity check
+        entropy = self._calculate_entropy(value)
+        if len(value) > 20 and entropy < 3.5: return False
+        if len(set(value)) < 7: return False
         return True
-    
+
+    def _is_valid_url(self, value):
+        if not value or len(value) < 15 or self._is_static_noise(value): return False
+        val_lower = value.lower()
+        for domain in NOISE_DOMAINS:
+            if domain in val_lower: return False
+        return '://' in value or value.startswith('//')
+
+    def _is_valid_subdomain(self, value):
+        if not value or len(value) < 5 or self._is_static_noise(value): return False
+        parts = value.lower().split('.')
+        if len(parts) < 2 or parts[-1] not in VALID_TLDS: return False
+        # Ignore common JS noise
+        noise = {'parse','stringify','push','pop','shift','unshift','length','prototype','window','document','on','bs','min','max'}
+        if any(p in noise for p in parts): return False
+        return True
+
     def _is_valid_email(self, value):
-        """Validate emails."""
-        if not value or '@' not in value:
-            return False
-        
-        val_lower = value.lower()
+        if not value or '@' not in value or self._is_static_noise(value): return False
         domain = value.split('@')[-1].lower()
-        
-        if domain in {'example.com', 'test.com', 'domain.com', 'placeholder.com'}:
-            return False
-        
-        if any(x in val_lower for x in ['example', 'test', 'placeholder', 'noreply']):
-            return False
-        
+        if domain in {'example.com', 'test.com'} or 'noreply' in value.lower(): return False
         return True
-    
+
     def _is_valid_file(self, value):
-        """Validate file references."""
-        if not value or len(value) < 3:
-            return False
-        
+        if not value or len(value) < 3 or self._is_static_noise(value): return False
         val_lower = value.lower()
-        
-        # Skip common JS/build files
-        if any(x in val_lower for x in [
-            'package.json', 'tsconfig.json', 'webpack', 'babel',
-            'eslint', 'prettier', 'node_modules', '.min.',
-            'polyfill', 'vendor', 'chunk', 'bundle'
-        ]):
-            return False
-        
-        # Skip source maps
-        if val_lower.endswith('.map'):
-            return False
-        
-        # Skip common locale/language files
-        if val_lower.endswith('.json') and len(value.split('/')[-1]) <= 7:
-            return False
-        
-        return True
+        if any(x in val_lower for x in ['node_modules', '.min.', 'chunk', 'bundle', 'webpack']): return False
+        return any(val_lower.endswith(ext) for ext in ['.js', '.json', '.php', '.asp', '.aspx', '.jsp', '.sql', '.env', '.yaml'])
+
+    def _get_best_category(self, value):
+        val_lower = value.lower()
+        if val_lower.startswith('http') or val_lower.startswith('//'): return "urls"
+        if any(val_lower.endswith(ext) for ext in ['.js', '.json', '.php', '.sql', '.bak']): return "files"
+        return "endpoints"
+
+    def get_source_code(self, source_name):
+        return self.source_map.get(source_name, "")
     
     def clear_results(self):
         self.all_findings = []
         self.seen_values = set()
         self.source_map = {}
-    
+        
     def get_all_findings(self):
         return self.all_findings
 
 
 class AnalyzeAction(ActionListener):
-    def __init__(self, extender, invocation):
+    def __init__(self, extender, invocation, mode="all"):
         self.extender = extender
         self.invocation = invocation
+        self.mode = mode
     
     def actionPerformed(self, event):
         messages = self.invocation.getSelectedMessages()
         for msg in messages:
-            self.extender.analyze_response(msg)
+            # Run analysis in a background thread to prevent hanging Burp UI
+            thread = Thread(lambda: self.extender.analyze_response(msg, self.mode))
+            thread.start()
