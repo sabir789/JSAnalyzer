@@ -43,8 +43,6 @@ class ResultsPanel(JPanel):
         self.LABEL_FONT = Font("SansSerif", Font.PLAIN, 12)
         self.MONO_FONT = Font("Monospaced", Font.PLAIN, 12)
         
-        self.MONO_FONT = Font("Monospaced", Font.PLAIN, 12)
-        
         # Store tables for access
         self.tables = {}
         self.models = {}
@@ -59,6 +57,7 @@ class ResultsPanel(JPanel):
             "cloud": [],
             "subdomains": [],
             "keywords": [],
+            "dom_sinks": [],
         }
         
         self.sources = set()
@@ -86,6 +85,11 @@ class ResultsPanel(JPanel):
         self.stats_label.setFont(self.LABEL_FONT)
         self.stats_label.setForeground(self.TEXT_SECONDARY)
         title_box.add(self.stats_label)
+        title_box.add(Box.createHorizontalStrut(15))
+        self.progress_label = JLabel("")
+        self.progress_label.setFont(self.LABEL_FONT)
+        self.progress_label.setForeground(Color(100, 255, 100))
+        title_box.add(self.progress_label)
         top_panel.add(title_box, BorderLayout.WEST)
         
         # Filters
@@ -133,6 +137,7 @@ class ResultsPanel(JPanel):
             ("Cloud", "cloud"),
             ("Subdomains", "subdomains"),
             ("Keywords", "keywords"),
+            ("DOM Sinks", "dom_sinks"),
         ]
         
         for title, key in categories:
@@ -263,16 +268,23 @@ class ResultsPanel(JPanel):
         clear_btn.addActionListener(ClearAction(self))
         bottom_panel.add(clear_btn)
         
-        export_btn = JButton("Export JSON")
+        export_btn = JButton("Export Results")
         style_btn(export_btn)
         export_btn.addActionListener(ExportAction(self))
         bottom_panel.add(export_btn)
         
         self.add(bottom_panel, BorderLayout.SOUTH)
     
+    def set_progress(self, text):
+        """Show progress text during analysis."""
+        def update():
+            self.progress_label.setText(text)
+        SwingUtilities.invokeLater(update)
+
     def add_findings(self, new_findings, source_name):
         """Add new findings and update UI."""
         def update():
+            self.progress_label.setText("")
             if source_name and source_name not in self.sources:
                 self.sources.add(source_name)
                 self.source_filter.addItem(source_name)
@@ -303,8 +315,8 @@ class ResultsPanel(JPanel):
         selected_source = str(self.source_filter.getSelectedItem())
         search_text = self.search_field.getText().lower().strip()
         
-        titles = ["Endpoints", "URLs", "Secrets", "Emails", "Files", "Cloud", "Subdomains", "Keywords"]
-        keys = ["endpoints", "urls", "secrets", "emails", "files", "cloud", "subdomains", "keywords"]
+        titles = ["Endpoints", "URLs", "Secrets", "Emails", "Files", "Cloud", "Subdomains", "Keywords", "DOM Sinks"]
+        keys = ["endpoints", "urls", "secrets", "emails", "files", "cloud", "subdomains", "keywords", "dom_sinks"]
         
         for i, (title, key) in enumerate(zip(titles, keys)):
             model = self.models[key]
@@ -337,7 +349,7 @@ class ResultsPanel(JPanel):
         self._update_stats()
     
     def _update_stats(self):
-        """Update metrics label."""
+        """Update metrics label with total count."""
         e = len(self.findings.get("endpoints", []))
         u = len(self.findings.get("urls", []))
         s = len(self.findings.get("secrets", []))
@@ -346,7 +358,9 @@ class ResultsPanel(JPanel):
         c = len(self.findings.get("cloud", []))
         d = len(self.findings.get("subdomains", []))
         k = len(self.findings.get("keywords", []))
-        self.stats_label.setText("E:%d | U:%d | S:%d | M:%d | F:%d | C:%d | D:%d | K:%d" % (e, u, s, m, f, c, d, k))
+        x = len(self.findings.get("dom_sinks", []))
+        total = e + u + s + m + f + c + d + k + x
+        self.stats_label.setText("TOTAL:%d | E:%d | U:%d | S:%d | M:%d | F:%d | C:%d | D:%d | K:%d | X:%d" % (total, e, u, s, m, f, c, d, k, x))
     
     def update_preview(self, text):
         """Update the preview text area."""
@@ -375,24 +389,20 @@ class ResultsPanel(JPanel):
 
     def _get_current_table(self):
         idx = self.tabs.getSelectedIndex()
-        keys = ["endpoints", "urls", "secrets", "emails", "files", "cloud", "subdomains", "keywords"]
+        keys = ["endpoints", "urls", "secrets", "emails", "files", "cloud", "subdomains", "keywords", "dom_sinks"]
         if 0 <= idx < len(keys):
-            # Ensure self.tables is initialized before access
             if not hasattr(self, 'tables'):
-                self.tables = {} # Initialize if not already
+                self.tables = {}
             return self.tables.get(keys[idx])
         return None
 
     def _get_current_key(self):
         idx = self.tabs.getSelectedIndex()
-        keys = ["endpoints", "urls", "secrets", "emails", "files", "cloud", "subdomains", "keywords"]
+        keys = ["endpoints", "urls", "secrets", "emails", "files", "cloud", "subdomains", "keywords", "dom_sinks"]
         if 0 <= idx < len(keys):
             return keys[idx]
         return None
 
-    def _copy_to_clipboard(self, text):
-        """Robust clipboard copy for Burp/AWT environments."""
-        if not text: return
     def _copy_to_clipboard(self, text):
         """
         Robust clipboard copy using SwingUtilities.invokeLater.
@@ -513,19 +523,58 @@ class ResultsPanel(JPanel):
         SwingUtilities.invokeLater(update)
 
     def export_all(self):
-        from javax.swing import JFileChooser
+        from javax.swing import JFileChooser, JOptionPane
         from java.io import File
+        
+        # Ask format
+        options = ["JSON (Detailed)", "JSON (Values Only)", "CSV"]
+        choice = JOptionPane.showOptionDialog(
+            self, "Select export format:", "Export Findings",
+            JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE,
+            None, options, options[0]
+        )
+        if choice < 0: return
+        
+        ext = ".csv" if choice == 2 else ".json"
         chooser = JFileChooser()
-        chooser.setSelectedFile(File("js_findings.json"))
+        chooser.setSelectedFile(File("js_findings" + ext))
         if chooser.showSaveDialog(self) == JFileChooser.APPROVE_OPTION:
             path = chooser.getSelectedFile().getAbsolutePath()
-            export = {k: [f["value"] for f in v] for k, v in self.findings.items()}
-            with open(path, 'w') as f:
-                json.dump(export, f, indent=2)
+            
+            if choice == 0:  # Detailed JSON
+                export = {}
+                for k, v in self.findings.items():
+                    export[k] = [{"value": f.get("value",""), "source": f.get("source",""), 
+                                  "detail": f.get("detail",""), "url": f.get("url","")} for f in v]
+                export["_meta"] = {"total": sum(len(v) for v in self.findings.values()),
+                                   "sources": list(self.sources)}
+                with open(path, 'w') as f:
+                    json.dump(export, f, indent=2)
+            elif choice == 1:  # Values only JSON
+                export = {k: [f["value"] for f in v] for k, v in self.findings.items()}
+                with open(path, 'w') as f:
+                    json.dump(export, f, indent=2)
+            else:  # CSV
+                with open(path, 'w') as f:
+                    f.write("Category,Value,Source,Detail\n")
+                    for k, findings in self.findings.items():
+                        for item in findings:
+                            val = str(item.get("value","")).replace('"', '""')
+                            src = str(item.get("source","")).replace('"', '""')
+                            det = str(item.get("detail","")).replace('"', '""')
+                            f.write('"%s","%s","%s","%s"\n' % (k, val, src, det))
 
 
 class ValueSelectionRenderer(DefaultTableCellRenderer):
-    """Renderer that only highlights selection on the first column for Value-Only feel."""
+    """Renderer with selection highlighting and severity color-coding for secrets."""
+    
+    SEVERITY_COLORS = {
+        "CRITICAL": Color(180, 40, 40),    # Deep red
+        "HIGH": Color(200, 120, 30),       # Orange
+        "MEDIUM": Color(180, 180, 50),     # Yellow-ish
+        "LOW": Color(80, 160, 80),         # Green
+    }
+    
     def __init__(self, selection_bg, normal_bg, normal_fg):
         DefaultTableCellRenderer.__init__(self)
         self.selection_bg = selection_bg
@@ -535,15 +584,33 @@ class ValueSelectionRenderer(DefaultTableCellRenderer):
     def getTableCellRendererComponent(self, table, value, isSelected, hasFocus, row, column):
         c = DefaultTableCellRenderer.getTableCellRendererComponent(self, table, value, isSelected, hasFocus, row, column)
         
-        # Visually only "Value" (column 0) should show selection
         if isSelected and column == 0:
             c.setBackground(self.selection_bg)
             c.setForeground(Color.WHITE)
         else:
-            c.setBackground(self.normal_bg)
-            c.setForeground(self.normal_fg)
+            # Check for severity in detail column (column 2) for color coding
+            bg = self.normal_bg
+            fg = self.normal_fg
+            try:
+                model_row = table.convertRowIndexToModel(row)
+                detail = str(table.getModel().getValueAt(model_row, 2) or "")
+                if detail.startswith("[CRITICAL]"):
+                    bg = Color(60, 20, 20)
+                    fg = Color(255, 120, 120)
+                elif detail.startswith("[HIGH]"):
+                    bg = Color(50, 35, 15)
+                    fg = Color(255, 180, 80)
+                elif detail.startswith("[MEDIUM]"):
+                    bg = Color(45, 45, 20)
+                    fg = Color(230, 230, 100)
+                elif detail.startswith("[LOW]"):
+                    bg = Color(20, 45, 20)
+                    fg = Color(120, 220, 120)
+            except:
+                pass
+            c.setBackground(bg)
+            c.setForeground(fg)
             
-        # Standard padding
         c.setBorder(BorderFactory.createEmptyBorder(0, 10, 0, 10))
         return c
 
@@ -566,7 +633,13 @@ class SourceViewerDialog(JDialog):
         fg = Color(220, 220, 200)
         highlight = Color(0, 102, 204, 100) # Semi-transparent blue
         
-        area = JTextArea(content)
+        # Add line numbers to content
+        numbered_lines = []
+        for i, line in enumerate(content.split('\n'), 1):
+            numbered_lines.append("%4d | %s" % (i, line))
+        numbered_content = '\n'.join(numbered_lines)
+        
+        area = JTextArea(numbered_content)
         area.setEditable(False)
         area.setBackground(bg)
         area.setForeground(fg)
@@ -621,8 +694,15 @@ class TableSelectionListener(ListSelectionListener):
                 try:
                     model_row = self.table.convertRowIndexToModel(row)
                     value = self.table.getModel().getValueAt(model_row, 0)
+                    detail = self.table.getModel().getValueAt(model_row, 2)
+                    source = self.table.getModel().getValueAt(model_row, 1)
                     if value:
-                        self.panel.update_preview(str(value).strip())
+                        preview = "Value: %s" % str(value).strip()
+                        if detail:
+                            preview += "\nDetail: %s" % str(detail).strip()
+                        if source:
+                            preview += "\nSource: %s" % str(source).strip()
+                        self.panel.update_preview(preview)
                 except: pass
 
 
