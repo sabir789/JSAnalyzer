@@ -559,25 +559,70 @@ SECRET_PATTERNS = [
     (re.compile(r'(postmark[-\s]?server[-\s]?token[=\s:]+["\']?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}["\']?)'), "Postmark Server Token"),
     (re.compile(r'(mailchimp[-\s]?api[-\s]?key[=\s:]+["\']?[0-9a-f]{32}-us[0-9]{1,2}["\']?)'), "Mailchimp API Key"),
     
-    # Cloud/Infrastructure
-    (re.compile(r'(AKIA[0-9A-Z]{16,20})'), "AWS Access Key"),
-    (re.compile(r'(ASIA[0-9A-Z]{16,20})'), "AWS Temporary Access Key"),
-    (re.compile(r'(AIza[0-9A-Za-z\-_]{35,45})'), "Google API Key"),
-    (re.compile(r'(sk_test_[0-9a-zA-Z]{24,})'), "Stripe Test Secret Key"),
-    (re.compile(r'(sk_live_[0-9a-zA-Z]{24,})'), "Stripe Live Secret Key"),
-    (re.compile(r'(xox[baprs]-[0-9a-zA-Z]{10,48})'), "Slack Token"),
-    (re.compile(r'(ghp_[0-9a-zA-Z]{36})'), "GitHub PAT"),
-    (re.compile(r'(twilio[-\s]?auth[-\s]?token[=\s:]+["\']?[0-9a-f]{32}["\']?)'), "Twilio Auth Token"),
-    (re.compile(r'(sendgrid[-\s]?api[-\s]?key[=\s:]+["\']?SG\.[0-9a-zA-Z\-_]{22}\.[0-9a-zA-Z\-_]{43}["\']?)'), "SendGrid API Key"),
+    # ===== AI/ML Service Keys =====
+    (re.compile(r'(sk-[a-zA-Z0-9]{20,})'), "OpenAI API Key"),
+    (re.compile(r'(sk-ant-[a-zA-Z0-9\-]{90,})'), "Anthropic API Key"),
+    (re.compile(r'(hf_[a-zA-Z0-9]{34})'), "HuggingFace Token"),
+    (re.compile(r'(r8_[a-zA-Z0-9]{40})'), "Replicate API Token"),
     
-    # Generic Patterns - Extremely Aggressive for Tokens & Assignments
-    (re.compile(r'(?:api[-\s_]?key|auth[-\s_]?token|access[-\s_]?token|secret[-\s_]?key|app[-\s_]?key|session[-\s_]?id|user[-\s_]?token|token|key|secret)[=\s:]+["\']?([0-9a-zA-Z\-_]{16,})["\']?', re.IGNORECASE), "Sensitive Assignment Pattern"),
-    (re.compile(r'["\'](eyJ[a-zA-Z0-9\-_]+\.eyJ[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]{20,})["\']'), "JWT Token"),
-    (re.compile(r'["\']([a-zA-Z0-9\-_]{32,})["\']'), "Generic String Token"),
-    (re.compile(r'(ghp_[0-9a-zA-Z]{36})'), "GitHub PAT"),
-    (re.compile(r'(sk_test_[0-9a-zA-Z]{24,})'), "Stripe Test Secret"),
-    (re.compile(r'(sk_live_[0-9a-zA-Z]{24,})'), "Stripe Live Secret"),
+    # ===== Auth Providers =====
+    (re.compile(r'(auth0[-_]?client[-_]?secret\s*[=:]\s*["\']?[a-zA-Z0-9_\-]{32,}["\']?)', re.IGNORECASE), "Auth0 Client Secret"),
+    (re.compile(r'(okta[-_]?api[-_]?token\s*[=:]\s*["\']?[0-9a-zA-Z_\-]{42}["\']?)', re.IGNORECASE), "Okta API Token"),
+    (re.compile(r'(cognito[-_]?client[-_]?secret\s*[=:]\s*["\']?[a-zA-Z0-9]{52}["\']?)', re.IGNORECASE), "AWS Cognito Client Secret"),
+    
+    # ===== Infrastructure =====
+    (re.compile(r'(hvs\.[a-zA-Z0-9_\-]{24,})'), "HashiCorp Vault Token"),
+    (re.compile(r'(consul[-_]?token\s*[=:]\s*["\']?[0-9a-f\-]{36}["\']?)', re.IGNORECASE), "Consul Token"),
+    (re.compile(r'(DO_API_TOKEN\s*[=:]\s*["\']?[a-f0-9]{64}["\']?)'), "DigitalOcean API Token"),
+    
+    # ===== Crypto/Blockchain =====
+    (re.compile(r'(0x[a-fA-F0-9]{64})'), "Ethereum Private Key"),
+    
+    # ===== DNS/CDN Providers =====
+    (re.compile(r'(cloudflare[-_]?api[-_]?key\s*[=:]\s*["\']?[0-9a-f]{37}["\']?)', re.IGNORECASE), "Cloudflare API Key"),
+    (re.compile(r'(fastly[-_]?api[-_]?token\s*[=:]\s*["\']?[a-zA-Z0-9_\-]{32}["\']?)', re.IGNORECASE), "Fastly API Token"),
+    
+    # ===== Messaging =====
+    (re.compile(r'([0-9]{8,10}:[a-zA-Z0-9_\-]{35})'), "Telegram Bot Token"),
+    
+    # ===== AWS Secret Access Key =====
+    (re.compile(r'(?:aws)?[-_]?secret[-_]?(?:access)?[-_]?key\s*[=:]\s*["\']?([a-zA-Z0-9/+=]{40})["\']?', re.IGNORECASE), "AWS Secret Access Key"),
+    
+    # ===== Passwords in Code =====
+    (re.compile(r'(?:password|passwd|pwd)\s*[=:]\s*["\']([^"\'\s]{6,60})["\']', re.IGNORECASE), "Hardcoded Password"),
+    (re.compile(r'(?:db[-_]?pass|database[-_]?password)\s*[=:]\s*["\']([^"\'\s]{6,60})["\']', re.IGNORECASE), "Database Password"),
+    
+    # ===== Connection Strings =====
+    (re.compile(r'((?:jdbc|odbc):[a-zA-Z0-9:/@._\-]+)', re.IGNORECASE), "JDBC/ODBC Connection String"),
+    (re.compile(r'(Server=[^;]+;.*(?:Password|Pwd)=[^;]+)', re.IGNORECASE), "ADO.NET Connection String"),
+    
+    # ===== Generic Patterns (deduplicated) =====
+    (re.compile(r'(?:api[-\s_]?key|auth[-\s_]?token|access[-\s_]?token|secret[-\s_]?key|app[-\s_]?key|session[-\s_]?id|user[-\s_]?token)[=\s:]+["\']?([0-9a-zA-Z\-_]{16,})["\']?', re.IGNORECASE), "Sensitive Assignment Pattern"),
+    (re.compile(r'["\']([a-zA-Z0-9\-_]{40,})["\']'), "High-Entropy String Token"),
 ]
+
+# Secret Severity Classification
+SECRET_SEVERITY = {
+    "Private Key": "CRITICAL", "AWS Access Key": "CRITICAL", "AWS Temporary Access Key": "CRITICAL",
+    "AWS Secret Access Key": "CRITICAL", "MongoDB URI": "CRITICAL", "PostgreSQL URI": "CRITICAL",
+    "MySQL URI with Credentials": "CRITICAL", "Redis URI with Password": "CRITICAL",
+    "Ethereum Private Key": "CRITICAL", "Hardcoded Password": "CRITICAL",
+    "Database Password": "CRITICAL", "JDBC/ODBC Connection String": "CRITICAL",
+    "ADO.NET Connection String": "CRITICAL", "AWS Cognito Client Secret": "CRITICAL",
+    "Stripe Live Secret Key": "HIGH", "GitHub Token": "HIGH", "GitHub PAT": "HIGH",
+    "Slack Token": "HIGH", "JWT": "HIGH", "JWT Token": "HIGH",
+    "Google API Key": "HIGH", "OpenAI API Key": "HIGH", "Anthropic API Key": "HIGH",
+    "HuggingFace Token": "HIGH", "Replicate API Token": "HIGH",
+    "HashiCorp Vault Token": "HIGH", "Telegram Bot Token": "HIGH",
+    "Auth0 Client Secret": "HIGH", "Okta API Token": "HIGH", "Consul Token": "HIGH",
+    "Cloudflare API Key": "HIGH", "Fastly API Token": "HIGH",
+    "DigitalOcean API Token": "HIGH", "Twilio Auth Token": "HIGH",
+    "SendGrid API Key": "HIGH", "Twilio Account SID": "HIGH",
+    "Stripe Test Secret Key": "MEDIUM", "Stripe Live Publishable Key": "MEDIUM",
+    "Firebase API Key": "MEDIUM", "Supabase Anon Key": "MEDIUM",
+    "Sensitive Assignment Pattern": "MEDIUM", "High-Entropy String Token": "LOW",
+}
+
 
 # Cloud Patterns
 CLOUD_PATTERNS = [
@@ -611,500 +656,81 @@ KEYWORD_PATTERNS = [
 EMAIL_PATTERN = re.compile(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6})')
 
 # File patterns - detect references to sensitive file types
+# Compact set-based approach (replaces 490-line mega-regex)
+SENSITIVE_EXTENSIONS = {
+    'sql', 'db', 'sqlite', 'sqlite3', 'mdb', 'csv', 'tsv', 'xlsx', 'xls',
+    'json', 'jsonl', 'xml', 'yaml', 'yml', 'toml', 'avro', 'parquet',
+    'conf', 'config', 'cfg', 'ini', 'env', 'properties', 'settings',
+    'log', 'htaccess', 'htpasswd', 'bak', 'backup', 'old', 'orig', 'tmp', 'swp',
+    'key', 'pem', 'crt', 'cer', 'csr', 'der', 'p12', 'pfx', 'jks', 'gpg',
+    'doc', 'docx', 'pdf', 'ppt', 'pptx', 'odt', 'rtf',
+    'zip', 'tar', 'gz', 'tgz', 'bz2', 'rar', '7z', 'war', 'jar',
+    'sh', 'bash', 'bat', 'cmd', 'ps1', 'vbs', 'py', 'rb', 'pl', 'php',
+    'tf', 'tfstate', 'tfvars', 'hcl', 'dump', 'export', 'pcap',
+    'asp', 'aspx', 'jsp', 'cgi',
+    'dockerignore', 'dockerfile',
+    'kubeconfig', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519',
+    'known_hosts', 'authorized_keys',
+}
+
+_ext_pattern = '|'.join(sorted(SENSITIVE_EXTENSIONS))
+
 FILE_PATTERNS = [
-    # Comprehensive file extension patterns
-    re.compile(
-        r'["\']([a-zA-Z0-9_/.-]+\.(?:'
-        # Data files
-        r'sql|db|sqlite|sqlite3|mdb|accdb|dbf|mdf|'
-        r'csv|tsv|tab|dat|data|'
-        r'xlsx|xls|xlsm|xlsb|ods|'
-        r'json|jsonl|ndjson|'
-        r'xml|xhtml|xsd|xslt|rss|atom|'
-        r'yaml|yml|toml|properties|'
-        r'avro|parquet|orc|feather|'
-        r'h5|hdf5|hdf|mat|'
-        r'pkl|pickle|joblib|'
-        r'tfrecord|recordio|'
-        r'arrow|'
-        # Config/logs
-        r'conf|config|cfg|ini|inf|reg|'
-        r'env|properties|settings|prefs|'
-        r'log|logs|txt|text|md|markdown|rst|'
-        r'xml|json|yaml|yml|'
-        r'htaccess|htpasswd|'
-        r'gitignore|gitattributes|gitmodules|'
-        r'dockerignore|dockerfile|'
-        r'editorconfig|'
-        # Backups
-        r'bak|backup|old|orig|copy|temp|tmp|'
-        r'swp|swo|swn|'
-        r'~|\$|'
-        # Certificates/Keys
-        r'key|pem|crt|cer|csr|der|'
-        r'p12|pfx|p7b|p7c|spc|'
-        r'jks|keystore|truststore|'
-        r'gpg|pgp|asc|'
-        r'pub|priv|'
-        # Documents
-        r'doc|docx|docm|odt|rtf|'
-        r'pdf|'
-        r'ppt|pptx|pptm|odp|'
-        r'pages|numbers|key|'
-        r'epub|mobi|azw|'
-        r'html|htm|'
-        # Archives
-        r'zip|tar|gz|tgz|bz2|tbz2|xz|txz|'
-        r'rar|7z|z|Z|lz|lzma|lzo|'
-        r'iso|img|dmg|vhd|vdi|vmdk|'
-        r'war|jar|ear|aar|'
-        # Scripts/Executables
-        r'sh|bash|zsh|fish|csh|tcsh|ksh|'
-        r'bat|cmd|ps1|psm1|psd1|vbs|wsf|'
-        r'py|pyc|pyo|pyd|pyw|pyx|'
-        r'rb|erb|rake|gemspec|'
-        r'pl|pm|t|'
-        r'js|jsx|mjs|cjs|ts|tsx|'
-        r'php|phtml|php3|php4|php5|php7|phps|'
-        r'java|class|jar|'
-        r'go|'
-        r'rs|'
-        r'cpp|c|cc|cxx|h|hpp|hh|hxx|'
-        r'cs|vb|fs|'
-        r'swift|m|mm|'
-        r'kt|kts|'
-        r'scala|'
-        r'lua|'
-        r'erl|hrl|'
-        r'ex|exs|'
-        r'clj|cljs|cljc|edn|'
-        r'hs|lhs|'
-        # Media files (potentially sensitive)
-        r'jpg|jpeg|png|gif|bmp|tiff|tif|webp|'
-        r'mp3|wav|flac|aac|ogg|m4a|'
-        r'mp4|avi|mov|wmv|flv|mkv|webm|'
-        r'svg|ico|icns|'
-        # Database dumps
-        r'dump|export|backup|restore|'
-        # Virtual environments
-        r'venv|virtualenv|env|'
-        # Lock files
-        r'lock|pid|'
-        # Build/Compiled files
-        r'exe|dll|so|dylib|a|lib|'
-        r'o|obj|'
-        r'bin|elf|'
-        # Network/config
-        r'pcap|cap|'
-        r'pem|der|'
-        # Cloud/Infrastructure
-        r'tf|tfstate|tfvars|'
-        r'yml|yaml|'
-        r'json|'
-        r'hcl|'
-        # Other sensitive
-        r'secret|private|hidden|'
-        r'password|credential|token|'
-        r'license|licence|'
-        r'history|bash_history|'
-        r'known_hosts|authorized_keys|'
-        r'id_rsa|id_dsa|id_ecdsa|id_ed25519|'
-        r'ssh|'
-        r'vault|'
-        r'kubeconfig|'
-        r'terraform|'
-        r'dockerconfig|'
-        r'aws|azure|gcp|'
-        r'secret|key|token'
-        r'))["\']',
-        re.IGNORECASE
-    ),
-    
-    # Specific sensitive file name patterns (without extensions)
-    re.compile(r'["\']((?:'
-        r'\.env(?:\.\w+)?|'
-        r'\.dockerignore|\.gitignore|\.npmignore|'
-        r'\.htaccess|\.htpasswd|'
-        r'\.bashrc|\.bash_profile|\.profile|\.zshrc|'
-        r'\.ssh/config|\.ssh/authorized_keys|\.ssh/known_hosts|'
-        r'\.aws/config|\.aws/credentials|'
-        r'\.kube/config|'
-        r'\.docker/config\.json|'
-        r'\.npmrc|\.yarnrc|'
-        r'\.pypirc|'
-        r'\.gitconfig|\.git-credentials|'
-        r'\.netrc|'
-        r'\.pgpass|'
-        r'\.my\.cnf|'
-        r'\.plan|\.project|'
-        r'\.travis\.yml|\.circleci/config\.yml|'
-        r'\.github/workflows/.*\.yml|'
-        r'\.vscode/settings\.json|'
-        r'\.idea/.*|'
-        r'\.DS_Store|'
-        r'\.Trash|\.Trashes|'
-        r'\.Spotlight-V100|'
-        r'\.fseventsd|'
-        r'\.metadata|'
-        r'\.svn/.*|\.git/.*|\.hg/.*|'
-        r'\.cache/.*|'
-        r'\.config/.*|'
-        r'\.local/.*|'
-        r'\.m2/settings\.xml|'
-        r'\.gradle/gradle\.properties|'
-        r'\.composer/auth\.json|'
-        r'\.npm/_auth|'
-        r'\.pip/pip\.conf|'
-        r'\.condarc|'
-        r'\.bowerrc|'
-        r'\.jfrog|'
-        r'\.snyk|'
-        r'\.sops\.yaml|'
-        r'\.pre-commit-config\.yaml|'
-        r'\.renovaterc|'
-        r'\.babelrc|'
-        r'\.eslintrc|\.eslintrc\.json|\.eslintrc\.js|'
-        r'\.prettierrc|\.prettierrc\.json|\.prettierrc\.js|'
-        r'\.stylelintrc|'
-        r'\.commitlintrc|'
-        r'\.lintstagedrc|'
-        r'\.huskyrc|'
-        r'\.npmignore|'
-        r'\.yarnrc\.yml|'
-        r'\.yarn-integrity|'
-        r'\.pnp\.js|'
-        r'\.yarn/.*|'
-        r'\.node_repl_history|'
-        r'\.wget-hsts|'
-        r'\.lesshst|'
-        r'\.mysql_history|\.psql_history|\.sqlite_history|'
-        r'\.rediscli_history|'
-        r'\.dbshell|'
-        r'\.mongorc\.js|\.mongoshrc\.js|'
-        r'\.irb_history|'
-        r'\.python_history|'
-        r'\.jupyter/.*|'
-        r'\.ipython/.*|'
-        r'\.Rhistory|'
-        r'\.bash_history|\.zsh_history|\.fish_history|'
-        r'\.inputrc|'
-        r'\.tmux\.conf|'
-        r'\.screenrc|'
-        r'\.viminfo|\.vimrc|\.gvimrc|'
-        r'\.emacs|\.emacs\.d/.*|'
-        r'\.gnupg/.*|'
-        r'\.password-store/.*|'
-        r'\.keepass|\.kdbx|'
-        r'\.1password|'
-        r'\.lastpass|'
-        r'\.bitwarden|'
-        r'\.vault-token|'
-        r'\.terraformrc|\.terraform\.d/.*|'
-        r'\.packer\.d/.*|'
-        r'\.vagrant\.d/.*|'
-        r'\.ansible/.*|'
-        r'\.chef/.*|'
-        r'\.puppet/.*|'
-        r'\.salt/.*|'
-        r'\.mina/.*|'
-        r'\.capistrano/.*|'
-        r'\.mina/.*|'
-        r'\.mina_deploy/.*|'
-        r'\.mina\.rb|'
-        r'\.deploy/.*|'
-        r'\.pm2/.*|'
-        r'\.forever/.*|'
-        r'\.pm2/.*|'
-        r'\.systemd/.*|'
-        r'\.init\.d/.*|'
-        r'\.cron\.d/.*|'
-        r'\.logrotate\.d/.*|'
-        r'\.rsyslog\.d/.*|'
-        r'\.nginx/.*|'
-        r'\.apache2/.*|'
-        r'\.httpd/.*|'
-        r'\.tomcat/.*|'
-        r'\.jetty/.*|'
-        r'\.wildfly/.*|'
-        r'\.jboss/.*|'
-        r'\.weblogic/.*|'
-        r'\.websphere/.*|'
-        r'\.iis/.*|'
-        r'\.phusion/.*|'
-        r'\.passenger/.*|'
-        r'\.unicorn/.*|'
-        r'\.puma/.*|'
-        r'\.thin/.*|'
-        r'\.god/.*|'
-        r'\.bluepill/.*|'
-        r'\.eye/.*|'
-        r'\.supervisor/.*|'
-        r'\.monit/.*|'
-        r'\.runit/.*|'
-        r'\.s6/.*|'
-        r'\.daemontools/.*|'
-        r'\.launchd/.*|'
-        r'\.upstart/.*|'
-        r'\.systemd/.*|'
-        r'\.init/.*|'
-        r'\.rc\.d/.*|'
-        r'\.profile\.d/.*|'
-        r'\.bashrc\.d/.*|'
-        r'\.zshrc\.d/.*|'
-        r'\.config/.*|'
-        r'\.local/.*|'
-        r'\.cache/.*|'
-        r'\.tmp/.*|'
-        r'\.temp/.*|'
-        r'\.trash/.*|'
-        r'\.Trash/.*|'
-        r'\.recycle/.*|'
-        r'\.Recycle\.Bin/.*|'
-        r'\.\$RECYCLE\.BIN/.*|'
-        r'\.found\.\d+/.*|'
-        r'\.lost\+found/.*|'
-        r'\.fseventsd/.*|'
-        r'\.Spotlight-V100/.*|'
-        r'\.TemporaryItems/.*|'
-        r'\.Trashes/.*|'
-        r'\.VolumeIcon\.icns|'
-        r'\.DS_Store|'
-        r'\.AppleDouble|'
-        r'\.LSOverride|'
-        r'\.AppleDB|'
-        r'\.AppleDesktop|'
-        r'\.AppleProfile|'
-        r'\.ParentalControls|'
-        r'\.DocumentRevisions-V100|'
-        r'\.MobileBackups|'
-        r'\.PKInstallSandboxManager|'
-        r'\.file|'
-        r'\.metadata|'
-        r'\.idea|'
-        r'\.vscode|'
-        r'\.atom|'
-        r'\.sublime-project|\.sublime-workspace|'
-        r'\.vs/.*|'
-        r'\.project|\.classpath|'
-        r'\.settings/.*|'
-        r'\.buildpath|'
-        r'\.factorypath|'
-        r'\.springBeans|'
-        r'\.externalToolBuilders/.*|'
-        r'\.recommenders/.*|'
-        r'\.eclipse/.*|'
-        r'\.metadata/.*|'
-        r'\.mvn/.*|'
-        r'\.gradle/.*|'
-        r'\.sbt/.*|'
-        r'\.bloop/.*|'
-        r'\.mill/.*|'
-        r'\.coursier/.*|'
-        r'\.ivy2/.*|'
-        r'\.sbt\.boot/.*|'
-        r'\.activator/.*|'
-        r'\.play/.*|'
-        r'\.npm/.*|'
-        r'\.node-gyp/.*|'
-        r'\.node_repl_history|'
-        r'\.yarn/.*|'
-        r'\.bower/.*|'
-        r'\.jspm/.*|'
-        r'\.typings/.*|'
-        r'\.tsd/.*|'
-        r'\.dart/.*|'
-        r'\.pub-cache/.*|'
-        r'\.flutter/.*|'
-        r'\.cargo/.*|'
-        r'\.rustup/.*|'
-        r'\.go/.*|'
-        r'\.gopath/.*|'
-        r'\.glide/.*|'
-        r'\.dep/.*|'
-        r'\.vendor/.*|'
-        r'\.vendor-cache/.*|'
-        r'\.bundle/.*|'
-        r'\.rvm/.*|'
-        r'\.rbenv/.*|'
-        r'\.gem/.*|'
-        r'\.gems/.*|'
-        r'\.bundler/.*|'
-        r'\.rake/.*|'
-        r'\.rails/.*|'
-        r'\.migrations/.*|'
-        r'\.seeds\.rb|'
-        r'\.schema\.rb|'
-        r'\.fixtures\.yml|'
-        r'\.factories\.rb|'
-        r'\.spec_helper\.rb|'
-        r'\.rails_helper\.rb|'
-        r'\.rspec|'
-        r'\.guard\.rb|'
-        r'\.simplecov|'
-        r'\.coverage/.*|'
-        r'\.yardoc/.*|'
-        r'\.ri/.*|'
-        r'\.rdoc/.*|'
-        r'\.pryrc|\.irbrc|'
-        r'\.ruby-version|\.ruby-gemset|'
-        r'\.python-version|'
-        r'\.requirements\.txt|'
-        r'\.pip-tools/.*|'
-        r'\.pipenv/.*|'
-        r'\.poetry/.*|'
-        r'\.venv/.*|\.virtualenv/.*|'
-        r'\.conda/.*|'
-        r'\.anaconda/.*|'
-        r'\.jupyter/.*|'
-        r'\.ipython/.*|'
-        r'\.python_history|'
-        r'\.node_version|'
-        r'\.nvmrc|'
-        r'\.npmrc|'
-        r'\.yarnrc|'
-        r'\.bowerrc|'
-        r'\.composer/.*|'
-        r'\.phar|'
-        r'\.pearrc|'
-        r'\.php-version|'
-        r'\.phpenv/.*|'
-        r'\.hhvm/.*|'
-        r'\.wp-cli/.*|'
-        r'\.drush/.*|'
-        r'\.drupal/.*|'
-        r'\.wordpress/.*|'
-        r'\.joomla/.*|'
-        r'\.magento/.*|'
-        r'\.prestashop/.*|'
-        r'\.opencart/.*|'
-        r'\.woocommerce/.*|'
-        r'\.shopify/.*|'
-        r'\.bigcommerce/.*|'
-        r'\.squarespace/.*|'
-        r'\.wix/.*|'
-        r'\.weebly/.*|'
-        r'\.webflow/.*|'
-        r'\.ghost/.*|'
-        r'\.jekyll/.*|'
-        r'\.hugo/.*|'
-        r'\.gatsby/.*|'
-        r'\.next/.*|'
-        r'\.nuxt/.*|'
-        r'\.vue/.*|'
-        r'\.react/.*|'
-        r'\.angular/.*|'
-        r'\.ember/.*|'
-        r'\.backbone/.*|'
-        r'\.meteor/.*|'
-        r'\.sails/.*|'
-        r'\.loopback/.*|'
-        r'\.nestjs/.*|'
-        r'\.adonis/.*|'
-        r'\.laravel/.*|'
-        r'\.symfony/.*|'
-        r'\.zend/.*|'
-        r'\.cakephp/.*|'
-        r'\.codeigniter/.*|'
-        r'\.yii/.*|'
-        r'\.phalcon/.*|'
-        r'\.slim/.*|'
-        r'\.lumen/.*|'
-        r'\.fuelphp/.*|'
-        r'\.kohana/.*|'
-        r'\.aura/.*|'
-        r'\.bearframework/.*|'
-        r'\.bolt/.*|'
-        r'\.cms/.*|'
-        r'\.concrete5/.*|'
-        r'\.contao/.*|'
-        r'\.craftcms/.*|'
-        r'\.dokuwiki/.*|'
-        r'\.drupal/.*|'
-        r'\.expressionengine/.*|'
-        r'\.grav/.*|'
-        r'\.joomla/.*|'
-        r'\.kirby/.*|'
-        r'\.magento/.*|'
-        r'\.mediawiki/.*|'
-        r'\.modx/.*|'
-        r'\.octobercms/.*|'
-        r'\.opencart/.*|'
-        r'\.pagekit/.*|'
-        r'\.phpbb/.*|'
-        r'\.pimcore/.*|'
-        r'\.prestashop/.*|'
-        r'\.processwire/.*|'
-        r'\.pyrocms/.*|'
-        r'\.redaxo/.*|'
-        r'\.silverstripe/.*|'
-        r'\.spip/.*|'
-        r'\.squiz/.*|'
-        r'\.statamic/.*|'
-        r'\.subrion/.*|'
-        r'\.textpattern/.*|'
-        r'\.typo3/.*|'
-        r'\.umbraco/.*|'
-        r'\.vbulletin/.*|'
-        r'\.wolfcms/.*|'
-        r'\.wordpress/.*|'
-        r'\.xenforo/.*|'
-        r'\.zikula/.*|'
-        r'secret|private|confidential|'
-        r'passwords|credentials|tokens|keys|'
-        r'\.swp|\.swo|\.swn|'
-        r'\.DS_Store|'
-        r'Thumbs\.db|'
-        r'desktop\.ini|'
-        r'\$\$.*\$\$'
-    r'))["\']', re.IGNORECASE),
-    
-    # Pattern for files with sensitive names (regardless of extension)
-    re.compile(
-        r'["\']([a-zA-Z0-9_/.-]*(?:'
-        r'password|credential|secret|token|key|'
-        r'private|confidential|hidden|internal|'
-        r'backup|dump|archive|snapshot|'
-        r'config|setting|profile|preference|'
-        r'log|debug|trace|audit|'
-        r'database|db|data|'
-        r'admin|root|superuser|'
-        r'license|licence|'
-        r'\.old|\.new|\.orig|\.copy|\.tmp|\.temp|\.bak'
-        r')[a-zA-Z0-9_/.-]*\.[a-zA-Z0-9]+)["\']',
-        re.IGNORECASE
-    ),
-    
-    # Pattern for files in sensitive directories
-    re.compile(
-        r'["\'](?:'
-        r'\.(?:git|svn|hg)/.*|'
-        r'\.?config/.*|'
-        r'\.?secrets/.*|'
-        r'\.?private/.*|'
-        r'\.?secure/.*|'
-        r'\.?backup/.*|'
-        r'\.?archive/.*|'
-        r'\.?log/.*|'
-        r'\.?tmp/.*|'
-        r'\.?temp/.*|'
-        r'\.?cache/.*|'
-        r'\.?trash/.*|'
-        r'\.?recycle/.*|'
-        r'\.?dump/.*|'
-        r'\.?snapshot/.*'
-        r')["\']',
-        re.IGNORECASE
-    ),
-    
-    # Pattern for suspicious file paths (Windows)
-    re.compile(r'["\']([A-Za-z]:\\[^\s"\']+\.(?:exe|dll|sys|bat|cmd|ps1|vbs|reg|pif|scr|msi|msp))["\']', re.IGNORECASE),
-    
-    # Pattern for suspicious file paths (Unix)
-    re.compile(r'["\'](/etc/[^\s"\']+|/var/log/[^\s"\']+|/tmp/[^\s"\']+|/root/[^\s"\']+|/home/[^/]+/[^\s"\']+)["\']'),
-    
-    # Pattern for files with version numbers (potentially backups)
-    re.compile(r'["\']([a-zA-Z0-9_/.-]+\.(?:v\d+|version\d+|_\d{8}|_\d{6}|-\d{8}|-\d{6}|\d{14}|\d{8}))["\']', re.IGNORECASE),
+    # Files with sensitive extensions
+    re.compile(r'["\']([a-zA-Z0-9_/.-]+\.(?:' + _ext_pattern + r'))["\']', re.IGNORECASE),
+    # Dot-files (config, credentials, etc.)
+    re.compile(r'["\'](\.(?:env|gitignore|htaccess|htpasswd|bashrc|bash_profile|npmrc|yarnrc|dockerignore|editorconfig|gitconfig|netrc|pgpass|pypirc|condarc|git-credentials|ssh|aws|kube|docker)[a-zA-Z0-9._/-]*)["\']', re.IGNORECASE),
+    # Files with sensitive keywords in name
+    re.compile(r'["\']([a-zA-Z0-9_/.-]*(?:password|credential|secret|token|private|backup|dump|config|admin|database|shadow|master|deploy)[a-zA-Z0-9_/.-]*\.[a-zA-Z0-9]+)["\']', re.IGNORECASE),
+    # Version control / sensitive directory traversals
+    re.compile(r'["\'](\.(?:git|svn|hg)/[^\s"\']+)["\']', re.IGNORECASE),
+    # Unix sensitive paths
+    re.compile(r'["\'](/etc/(?:passwd|shadow|hosts|group|sudoers|crontab|nginx|apache2|ssh|ssl)[^\s"\']*)["\']'),
+    re.compile(r'["\'](/var/log/[^\s"\']+|/tmp/[^\s"\']+|/root/[^\s"\']+|/home/[^/]+/\.[^\s"\']+)["\']'),
+    # Windows executables/sensitive
+    re.compile(r'["\']([A-Za-z]:\\[^\s"\']+\.(?:exe|dll|sys|bat|cmd|ps1|vbs|reg))["\']', re.IGNORECASE),
+    # Version/backup files
+    re.compile(r'["\']([a-zA-Z0-9_/.-]+\.(?:v\d+|_\d{8}|-\d{8}|\d{14}|\d{8}))["\']', re.IGNORECASE),
+    # Source maps
+    re.compile(r'["\']([a-zA-Z0-9_/.-]+\.map)["\']', re.IGNORECASE),
 ]
+
+# ===== NEW DETECTION CATEGORIES =====
+
+# DOM Sink Patterns (XSS-relevant dangerous functions)
+DOM_SINK_PATTERNS = [
+    (re.compile(r'\.(innerHTML|outerHTML)\s*='), "DOM XSS Sink: innerHTML/outerHTML"),
+    (re.compile(r'document\.write\s*\('), "DOM XSS Sink: document.write"),
+    (re.compile(r'\beval\s*\('), "Dangerous Function: eval()"),
+    (re.compile(r'\bFunction\s*\('), "Dangerous Function: Function()"),
+    (re.compile(r'setTimeout\s*\(\s*["\']'), "Dangerous Function: setTimeout(string)"),
+    (re.compile(r'setInterval\s*\(\s*["\']'), "Dangerous Function: setInterval(string)"),
+    (re.compile(r'\.insertAdjacentHTML\s*\('), "DOM XSS Sink: insertAdjacentHTML"),
+    (re.compile(r'\$\s*\(.*\)\.html\s*\('), "jQuery XSS Sink: .html()"),
+    (re.compile(r'\blocation\s*=|location\.href\s*='), "Potential Open Redirect"),
+    (re.compile(r'window\.open\s*\('), "Potential Open Redirect: window.open"),
+    (re.compile(r'\.setAttribute\s*\(\s*["\'](?:href|src|action)["\']'), "DOM Attribute Sink"),
+    (re.compile(r'\.createContextualFragment\s*\('), "DOM XSS Sink: createContextualFragment"),
+    (re.compile(r'\.srcdoc\s*='), "DOM XSS Sink: srcdoc"),
+    (re.compile(r'postMessage\s*\('), "postMessage (verify origin check)"),
+]
+
+# CORS Misconfiguration Patterns
+CORS_PATTERNS = [
+    (re.compile(r'Access-Control-Allow-Origin\s*:\s*\*', re.IGNORECASE), "CORS Wildcard Origin"),
+    (re.compile(r'Access-Control-Allow-Credentials\s*:\s*true', re.IGNORECASE), "CORS Allow Credentials"),
+    (re.compile(r'cors\s*:\s*\{[^}]*origin\s*:\s*true', re.IGNORECASE), "CORS Permissive Config"),
+    (re.compile(r'Access-Control-Allow-Headers\s*:\s*\*', re.IGNORECASE), "CORS Wildcard Headers"),
+]
+
+# Hardcoded IP Patterns
+IP_PATTERN = re.compile(r'["\'](\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d{1,5})?)["\']')
+
+# Comment Mining Patterns (developer info leaks)
+COMMENT_PATTERNS = [
+    re.compile(r'(?://|/\*|#)\s*(TODO|FIXME|HACK|XXX|BUG|SECURITY|VULN|TEMP|DEPRECATED|WARNING)[\s:]+([^\n*]{5,120})', re.IGNORECASE),
+]
+
 
 # ==================== NOISE FILTERS ====================
 # Extensive list of patterns to EXCLUDE
@@ -1247,7 +873,8 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
                     ("URLs Only", "urls"),
                     ("Subdomains Only", "subdomains"),
                     ("Cloud Storage Only", "cloud"),
-                    ("Emails & Files", "emails_files")
+                    ("Emails & Files", "emails_files"),
+                    ("DOM Sinks & Security", "dom_sinks"),
                 ]
                 
                 for label, mode in categories:
@@ -1287,6 +914,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
                 return
             
             self._log("Analyzing (%s): %s" % (mode, source_name))
+            self.panel.set_progress("Analyzing: %s..." % source_name)
             
             # Pre-process body to decode escapes (\uXXXX, \xXX)
             # This is critical for discovery in minified JS
@@ -1308,8 +936,8 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
             run_cloud = mode in ["all", "cloud"]
             run_subdomains = mode in ["all", "subdomains"]
             run_keywords = mode in ["all", "keywords"] or mode == "all"
+            run_dom_sinks = mode in ["all", "dom_sinks"]
             
-            # --- PHASE 1: Endpoints (Specific + Broad) ---
             # --- PHASE 1: Endpoints (Specific + Broad) ---
             if run_endpoints:
                 try:
@@ -1337,7 +965,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
                 except Exception as e:
                     self._log("URL Pass Failed: %s" % str(e))
             
-            # --- PHASE 3: Secrets ---
+            # --- PHASE 3: Secrets (with severity classification) ---
             if run_secrets or mode == "all":
                 try:
                     for pattern, secret_type in SECRET_PATTERNS:
@@ -1346,10 +974,13 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
                             if self._is_valid_secret(value):
                                 entropy = self._calculate_entropy(value)
                                 decoded = self._decode_base64(value)
-                                detail = "%s (Entropy: %.2f)" % (secret_type, entropy)
+                                severity = SECRET_SEVERITY.get(secret_type, "MEDIUM")
+                                detail = "[%s] %s (Entropy: %.2f)" % (severity, secret_type, entropy)
                                 if decoded: detail += " | Decoded: %s" % decoded
                                 finding = self._add_finding("secrets", value, url, match.start(1) if match.lastindex else match.start(0), detail, source_name)
-                                if finding: new_findings.append(finding)
+                                if finding:
+                                    finding["severity"] = severity
+                                    new_findings.append(finding)
                 except Exception as e:
                     self._log("Secret Pass Failed: %s" % str(e))
             
@@ -1409,8 +1040,54 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
                 except Exception as e:
                     self._log("Keyword Pass Failed: %s" % str(e))
 
+            # --- PHASE 9: DOM Sinks (XSS/Security) ---
+            if mode == "all":
+                try:
+                    for pattern, sink_type in DOM_SINK_PATTERNS:
+                        for match in pattern.finditer(body):
+                            value = match.group(0).strip()[:120]
+                            finding = self._add_finding("dom_sinks", value, url, match.start(), sink_type, source_name)
+                            if finding: new_findings.append(finding)
+                except Exception as e:
+                    self._log("DOM Sink Pass Failed: %s" % str(e))
+
+            # --- PHASE 10: CORS Misconfigurations ---
+            if mode == "all":
+                try:
+                    for pattern, cors_type in CORS_PATTERNS:
+                        for match in pattern.finditer(body):
+                            value = match.group(0).strip()[:120]
+                            finding = self._add_finding("dom_sinks", value, url, match.start(), cors_type, source_name)
+                            if finding: new_findings.append(finding)
+                except Exception as e:
+                    self._log("CORS Pass Failed: %s" % str(e))
+
+            # --- PHASE 11: Hardcoded IPs ---
+            if mode == "all":
+                try:
+                    for match in IP_PATTERN.finditer(body):
+                        value = match.group(1).strip()
+                        if self._is_valid_ip(value):
+                            finding = self._add_finding("endpoints", value, url, match.start(1), "Hardcoded IP Address", source_name)
+                            if finding: new_findings.append(finding)
+                except Exception as e:
+                    self._log("IP Pass Failed: %s" % str(e))
+
+            # --- PHASE 12: Comment Mining (Developer Info Leaks) ---
+            if mode == "all":
+                try:
+                    for pattern in COMMENT_PATTERNS:
+                        for match in pattern.finditer(body):
+                            tag = match.group(1).upper()
+                            comment_text = match.group(2).strip()
+                            value = "[%s] %s" % (tag, comment_text)
+                            finding = self._add_finding("keywords", value, url, match.start(), "Developer Comment", source_name)
+                            if finding: new_findings.append(finding)
+                except Exception as e:
+                    self._log("Comment Mining Pass Failed: %s" % str(e))
+
             # Final UI Update
-            # Final UI Update
+            self.panel.set_progress("")
             if new_findings:
                 self._log("Analysis Complete: %d items found." % len(new_findings))
                 self.panel.add_findings(new_findings, source_name)
@@ -1472,12 +1149,17 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         return bool(re.search(static_regex, value, re.IGNORECASE))
 
     def _calculate_entropy(self, text):
-        """Calculate Shannon Entropy for random key detection."""
+        """Calculate Shannon Entropy using frequency counting (optimized)."""
         if not text: return 0
-        entropy = 0
-        for x in range(256):
-            p_x = float(text.count(chr(x))) / len(text)
-            if p_x > 0: entropy += - p_x * math.log(p_x, 2)
+        length = float(len(text))
+        freq = {}
+        for c in text:
+            freq[c] = freq.get(c, 0) + 1
+        entropy = 0.0
+        for count in freq.values():
+            p_x = count / length
+            if p_x > 0:
+                entropy -= p_x * math.log(p_x, 2)
         return entropy
 
     def _is_valid_endpoint(self, value):
@@ -1534,11 +1216,36 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         if domain in {'example.com', 'test.com'} or 'noreply' in value.lower(): return False
         return True
 
+    def _is_valid_ip(self, value):
+        """Validate IP address - filter private/loopback ranges."""
+        if not value: return False
+        ip = value.split(':')[0]  # Remove port
+        parts = ip.split('.')
+        if len(parts) != 4: return False
+        try:
+            octets = [int(p) for p in parts]
+            if any(o < 0 or o > 255 for o in octets): return False
+            # Filter private/loopback/link-local
+            if octets[0] == 10: return False
+            if octets[0] == 127: return False
+            if octets[0] == 172 and 16 <= octets[1] <= 31: return False
+            if octets[0] == 192 and octets[1] == 168: return False
+            if octets[0] == 169 and octets[1] == 254: return False
+            if octets[0] == 0 or octets[0] == 255: return False
+            return True
+        except:
+            return False
+
     def _is_valid_file(self, value):
-        if not value or len(value) < 3 or self._is_static_noise(value): return False
+        if not value or len(value) < 3: return False
         val_lower = value.lower()
-        if any(x in val_lower for x in ['node_modules', '.min.', 'chunk', 'bundle', 'webpack']): return False
-        return any(val_lower.endswith(ext) for ext in ['.js', '.json', '.php', '.asp', '.aspx', '.jsp', '.sql', '.env', '.yaml'])
+        if any(x in val_lower for x in ['node_modules', '.min.', 'chunk', 'bundle', 'webpack', 'polyfill']): return False
+        # Use SENSITIVE_EXTENSIONS set for O(1) lookup
+        ext = val_lower.rsplit('.', 1)[-1] if '.' in val_lower else ''
+        if ext in SENSITIVE_EXTENSIONS: return True
+        # Also check dot-files
+        if val_lower.startswith('.'): return True
+        return False
 
     def _get_best_category(self, value):
         val_lower = value.lower()
@@ -1567,6 +1274,21 @@ class AnalyzeAction(ActionListener):
     def actionPerformed(self, event):
         messages = self.invocation.getSelectedMessages()
         for msg in messages:
-            # Run analysis in a background thread to prevent hanging Burp UI
-            thread = Thread(lambda: self.extender.analyze_response(msg, self.mode))
-            thread.start()
+            runner = AnalysisRunner(self.extender, msg, self.mode)
+            runner.start()
+
+
+class AnalysisRunner(Thread):
+    """Jython-compatible background thread for analysis."""
+    def __init__(self, extender, message, mode):
+        Thread.__init__(self)
+        self.extender = extender
+        self.message = message
+        self.mode = mode
+        self.setDaemon(True)
+    
+    def run(self):
+        try:
+            self.extender.analyze_response(self.message, self.mode)
+        except Exception as e:
+            self.extender._log("Analysis thread error: %s" % str(e))
